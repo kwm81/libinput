@@ -479,6 +479,9 @@ libinput_add_fd(struct libinput *libinput,
 		return NULL;
 	}
 #else
+	if (fd == -2)
+		return source;
+
 	struct kevent evlist[1];
 	EV_SET(&evlist[0], fd, EVFILT_READ, EV_ADD, 0, 0, source);
 
@@ -500,11 +503,7 @@ libinput_remove_source(struct libinput *libinput,
 #else
 	struct kevent evlist[1];
 	EV_SET(&evlist[0], source->fd, EVFILT_READ, EV_DELETE, 0, 0, 0);
-
-	if (kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL) == -1) {
-		fprintf(stderr, "remove_source failed\n");
-		exit(1);
-	}
+	kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL);
 #endif
 	source->fd = -1;
 	list_insert(&libinput->source_destroy_list, &source->link);

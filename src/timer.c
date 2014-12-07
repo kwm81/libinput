@@ -23,9 +23,13 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 #ifdef __linux__
 #include <sys/timerfd.h>
+#else
+#include <sys/types.h>
+#include <sys/event.h>
 #endif
 #include <unistd.h>
 
@@ -47,7 +51,6 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 {
 	int r;
 	struct libinput_timer *timer;
-	struct itimerspec its = { { 0, 0 }, { 0, 0 } };
 	uint64_t earliest_expire = UINT64_MAX;
 
 	list_for_each(timer, &libinput->timer.list, link) {
@@ -55,19 +58,32 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 			earliest_expire = timer->expire;
 	}
 
+#ifdef __linux__
+	struct itimerspec its = { { 0, 0 }, { 0, 0 } };
 	if (earliest_expire != UINT64_MAX) {
 		its.it_value.tv_sec = earliest_expire / 1000;
 		its.it_value.tv_nsec = (earliest_expire % 1000) * 1000 * 1000;
 	}
 
-#ifdef __linux__
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
-	if (r)
-		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
+	if (r) {
 #else
-	fprintf(stderr, "timer needs to be implemented on FreeBSD\n");
-	exit(1);
+	uint64_t now = libinput_now(timer->libinput);
+	struct kevent evlist[1];
+	if (earliest_expire != UINT64_MAX) {
+		if (earliest_expire >= now) {
+			EV_SET(&evlist[0], 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, earliest_expire - now, libinput->timer.source);
+		} else {
+			EV_SET(&evlist[0], 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 0, libinput->timer.source);
+		}
+	} else {
+		EV_SET(&evlist[0], 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
+	}
+
+	if (kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL) == -1) {
 #endif
+		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
+	}
 }
 
 void
@@ -81,6 +97,7 @@ libinput_timer_set(struct libinput_timer *timer, uint64_t expire)
 				 PRIu64 " expire %" PRIu64 "\n",
 				 now, expire);
 #endif
+	fprintf(stderr, "setting timer at %llu\n", (long long unsigned) expire);
 
 	assert(expire);
 
@@ -109,6 +126,8 @@ libinput_timer_handler(void *data)
 	struct libinput_timer *timer, *tmp;
 	uint64_t now;
 
+	fprintf(stderr, "handling timer\n");
+
 	now = libinput_now(libinput);
 	if (now == 0)
 		return;
@@ -130,11 +149,12 @@ libinput_timer_subsys_init(struct libinput *libinput)
 	libinput->timer.fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
 	if (libinput->timer.fd < 0)
 		return -1;
+#else
+	libinput->timer.fd = -2;
 #endif
 
 	list_init(&libinput->timer.list);
 
-#ifdef __linux__
 	libinput->timer.source = libinput_add_fd(libinput,
 						 libinput->timer.fd,
 						 libinput_timer_handler,
@@ -143,7 +163,6 @@ libinput_timer_subsys_init(struct libinput *libinput)
 		close(libinput->timer.fd);
 		return -1;
 	}
-#endif
 
 	return 0;
 }
@@ -154,8 +173,8 @@ libinput_timer_subsys_destroy(struct libinput *libinput)
 	/* All timer users should have destroyed their timers now */
 	assert(list_empty(&libinput->timer.list));
 
-#ifdef __linux__
 	libinput_remove_source(libinput, libinput->timer.source);
+#ifdef __linux__
 	close(libinput->timer.fd);
 #endif
 }
