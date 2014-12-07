@@ -30,10 +30,14 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __linux__
 #include <libudev.h>
+#endif
 #include "linux/input.h"
 #include <sys/ioctl.h>
+#ifdef __linux__
 #include <sys/signalfd.h>
+#endif
 
 #include <libinput.h>
 
@@ -52,12 +56,11 @@ static int verbose = 0;
 static void
 usage(void)
 {
-	printf("Usage: %s [--verbose] [--udev [<seat>]|--device /dev/input/event0]\n"
+	printf("Usage: [--verbose] [--udev [<seat>]|--device /dev/input/event0]\n"
 	       "--verbose ....... Print debugging output.\n"
 	       "--udev <seat>.... Use udev device discovery (default).\n"
 	       "		  Specifying a seat ID is optional.\n"
-	       "--device /path/to/device .... open the given device only\n",
-		program_invocation_short_name);
+	       "--device /path/to/device .... open the given device only\n");
 }
 
 static int
@@ -464,9 +467,13 @@ mainloop(struct libinput *li)
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);
 
+#ifdef __linux__
 	fds[1].fd = signalfd(-1, &mask, SFD_NONBLOCK);
 	fds[1].events = POLLIN;
 	fds[1].revents = 0;
+#else
+	fds[1].fd = -1;
+#endif
 
 	if (fds[1].fd == -1 ||
 	    sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {

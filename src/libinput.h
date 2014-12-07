@@ -29,7 +29,11 @@ extern "C" {
 
 #include <stdlib.h>
 #include <stdint.h>
+#ifdef __linux__
 #include <libudev.h>
+#else
+#include "udev-stubs.h"
+#endif
 
 #define LIBINPUT_ATTRIBUTE_PRINTF(_format, _args) \
 	__attribute__ ((format (printf, _format, _args)))

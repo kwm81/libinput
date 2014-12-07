@@ -24,7 +24,9 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <string.h>
+#ifdef __linux__
 #include <sys/timerfd.h>
+#endif
 #include <unistd.h>
 
 #include "libinput-private.h"
@@ -58,9 +60,11 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 		its.it_value.tv_nsec = (earliest_expire % 1000) * 1000 * 1000;
 	}
 
+#ifdef __linux__
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
 	if (r)
 		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
+#endif
 }
 
 void
@@ -119,9 +123,11 @@ libinput_timer_handler(void *data)
 int
 libinput_timer_subsys_init(struct libinput *libinput)
 {
+#ifdef __linux__
 	libinput->timer.fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
 	if (libinput->timer.fd < 0)
 		return -1;
+#endif
 
 	list_init(&libinput->timer.list);
 

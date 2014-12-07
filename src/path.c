@@ -22,10 +22,16 @@
 
 #include "config.h"
 
+#include <sys/stat.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#ifdef __linux__
 #include <libudev.h>
+#else
+#include "udev-stubs.h"
+#endif
 
 #include "path.h"
 #include "evdev.h"

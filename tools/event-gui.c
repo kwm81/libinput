@@ -98,7 +98,7 @@ msg(const char *fmt, ...)
 static void
 usage(void)
 {
-	printf("%s [path/to/device]\n", program_invocation_short_name);
+	printf("[path/to/device]\n");
 }
 
 static gboolean
