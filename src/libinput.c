@@ -497,11 +497,17 @@ libinput_remove_source(struct libinput *libinput,
 {
 #ifdef __linux__
 	epoll_ctl(libinput->epoll_fd, EPOLL_CTL_DEL, source->fd, NULL);
+#else
+	struct kevent evlist[1];
+	EV_SET(&evlist[0], source->fd, EVFILT_READ, EV_DELETE, 0, 0, 0);
+
+	if (kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL) == -1) {
+		fprintf(stderr, "remove_source failed\n");
+		exit(1);
+	}
+#endif
 	source->fd = -1;
 	list_insert(&libinput->source_destroy_list, &source->link);
-#else
-	return;
-#endif
 }
 
 int
@@ -756,17 +762,26 @@ libinput_get_fd(struct libinput *libinput)
 LIBINPUT_EXPORT int
 libinput_dispatch(struct libinput *libinput)
 {
-#ifdef __linux__
 	struct libinput_source *source;
-	struct epoll_event ep[32];
 	int i, count;
 
+#ifdef __linux__
+	struct epoll_event ep[32];
 	count = epoll_wait(libinput->epoll_fd, ep, ARRAY_LENGTH(ep), 0);
+#else
+	struct kevent evlist[32];
+	count = kevent(libinput->epoll_fd, NULL, 0, evlist,
+						ARRAY_LENGTH(evlist), 0);
+#endif
 	if (count < 0)
 		return -errno;
 
 	for (i = 0; i < count; ++i) {
+#ifdef __linux__
 		source = ep[i].data.ptr;
+#else
+		source = evlist[i].udata;
+#endif
 		if (source->fd == -1)
 			continue;
 
@@ -776,9 +791,6 @@ libinput_dispatch(struct libinput *libinput)
 	libinput_drop_destroyed_sources(libinput);
 
 	return 0;
-#else
-	return -1;
-#endif
 }
 
 void

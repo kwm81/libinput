@@ -1,6 +1,7 @@
 #ifndef UDEV_STUBS_H_
 #define UDEV_STUBS_H_
 
+#include <sys/stat.h>
 #include <sys/types.h>
 
 #include <stdio.h>
@@ -42,12 +43,24 @@ inline struct udev *udev_device_get_udev(struct udev_device *dummy __unused) {
   fprintf(stderr, "stub: udev_device_get_udev\n");
   return NULL;
 }
-inline struct udev_device *udev_device_new_from_devnum(struct udev *udev,
-                                                       char type,
-                                                       dev_t devnum) {
-  fprintf(stderr, "stub: udev_device_new_from_devnum\n");
+
+inline struct udev_device *udev_device_new_from_syspath(struct udev *udev,
+                                                        const char *syspath) {
+  fprintf(stderr, "stub: udev_list_entry_get_name\n");
+  struct udev_device *u = calloc(1, sizeof(struct udev_device));
+  if (u) {
+    u->refcount = 1;
+    u->syspath = syspath;
+    u->sysname = syspath + 11;
+    return u;
+  }
   return NULL;
 }
+
+struct udev_device *udev_device_new_from_devnum(struct udev *udev,
+                                                       char type,
+                                                       dev_t devnum);
+
 inline const char *udev_device_get_syspath(struct udev_device *udev_device) {
   fprintf(stderr, "udev_device_get_syspath\n");
   return udev_device->syspath;
@@ -57,11 +70,14 @@ inline const char *udev_device_get_sysname(struct udev_device *udev_device) {
   return udev_device->sysname;
 }
 inline struct udev_device *udev_device_ref(struct udev_device *udev_device) {
-  fprintf(stderr, "stub: udev_device_ref\n");
-  return NULL;
+  fprintf(stderr, "udev_device_ref\n");
+  ++udev_device->refcount;
+  return udev_device;
 }
 inline void udev_device_unref(struct udev_device *udev_device) {
-  fprintf(stderr, "udev_device_unref\n");
+  fprintf(stderr, "udev_device_unref %p %d\n", udev_device,
+          udev_device->refcount);
+
   --udev_device->refcount;
   if (udev_device->refcount == 0) {
     free(udev_device);
@@ -137,19 +153,6 @@ inline const char *udev_list_entry_get_name(
     struct udev_list_entry *list_entry) {
   fprintf(stderr, "udev_list_entry_get_name\n");
   return list_entry->path;
-}
-
-inline struct udev_device *udev_device_new_from_syspath(struct udev *udev,
-                                                        const char *syspath) {
-  fprintf(stderr, "stub: udev_list_entry_get_name\n");
-  struct udev_device *u = calloc(1, sizeof(struct udev_device));
-  if (u) {
-    u->refcount = 1;
-    u->syspath = syspath;
-    u->sysname = syspath + 11;
-    return u;
-  }
-  return NULL;
 }
 
 static inline void free_dev_list(struct udev_list_entry **list) {
