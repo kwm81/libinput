@@ -6,7 +6,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/include \
 event_debug_SOURCES = event-debug.c
 event_debug_LDADD = ../src/libinput.la $(LIBUDEV_LIBS)
 event_debug_LDFLAGS = -no-install
-event_debug_CFLAGS = $(LIBUDEV_CFLAGS)
+event_debug_CFLAGS = $(LIBUDEV_CFLAGS) $(LIBEVDEV_CFLAGS)
 
 if BUILD_EVENTGUI
 noinst_PROGRAMS += event-gui

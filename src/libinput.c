@@ -28,6 +28,9 @@
 #include <string.h>
 #ifdef __linux__
 #include <sys/epoll.h>
+#else
+#include <sys/types.h>
+#include <sys/event.h>
 #endif
 #include <unistd.h>
 #include <assert.h>
@@ -454,9 +457,7 @@ libinput_add_fd(struct libinput *libinput,
 		libinput_source_dispatch_t dispatch,
 		void *user_data)
 {
-#ifdef __linux__
 	struct libinput_source *source;
-	struct epoll_event ep;
 
 	source = malloc(sizeof *source);
 	if (!source)
@@ -466,6 +467,9 @@ libinput_add_fd(struct libinput *libinput,
 	source->user_data = user_data;
 	source->fd = fd;
 
+#ifdef __linux__
+	struct epoll_event ep;
+
 	memset(&ep, 0, sizeof ep);
 	ep.events = EPOLLIN;
 	ep.data.ptr = source;
@@ -474,11 +478,17 @@ libinput_add_fd(struct libinput *libinput,
 		free(source);
 		return NULL;
 	}
+#else
+	struct kevent evlist[1];
+	EV_SET(&evlist[0], fd, EVFILT_READ, EV_ADD, 0, 0, source);
+
+	if (kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL) == -1) {
+		free(source);
+		return NULL;
+	}
+#endif
 
 	return source;
-#else
-	return NULL;
-#endif
 }
 
 void
@@ -504,6 +514,11 @@ libinput_init(struct libinput *libinput,
 	libinput->epoll_fd = epoll_create1(EPOLL_CLOEXEC);;
 	if (libinput->epoll_fd < 0)
 		return -1;
+#else
+	libinput->epoll_fd = kqueue();
+	if (libinput->epoll_fd == -1)
+		return -1;
+#endif
 
 	libinput->events_len = 4;
 	libinput->events = zalloc(libinput->events_len * sizeof(*libinput->events));
@@ -513,7 +528,7 @@ libinput_init(struct libinput *libinput,
 	}
 
 	libinput->log_handler = libinput_default_log_func;
-	libinput->log_priority = LIBINPUT_LOG_PRIORITY_ERROR;
+	libinput->log_priority = LIBINPUT_LOG_PRIORITY_DEBUG;
 	libinput->interface = interface;
 	libinput->interface_backend = interface_backend;
 	libinput->user_data = user_data;
@@ -528,9 +543,6 @@ libinput_init(struct libinput *libinput,
 	}
 
 	return 0;
-#else
-	return -1;
-#endif
 }
 
 static void

@@ -64,6 +64,9 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
 	if (r)
 		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
+#else
+	fprintf(stderr, "timer needs to be implemented on FreeBSD\n");
+	exit(1);
 #endif
 }
 
@@ -131,6 +134,7 @@ libinput_timer_subsys_init(struct libinput *libinput)
 
 	list_init(&libinput->timer.list);
 
+#ifdef __linux__
 	libinput->timer.source = libinput_add_fd(libinput,
 						 libinput->timer.fd,
 						 libinput_timer_handler,
@@ -139,6 +143,7 @@ libinput_timer_subsys_init(struct libinput *libinput)
 		close(libinput->timer.fd);
 		return -1;
 	}
+#endif
 
 	return 0;
 }
@@ -149,6 +154,8 @@ libinput_timer_subsys_destroy(struct libinput *libinput)
 	/* All timer users should have destroyed their timers now */
 	assert(list_empty(&libinput->timer.list));
 
+#ifdef __linux__
 	libinput_remove_source(libinput, libinput->timer.source);
 	close(libinput->timer.fd);
+#endif
 }

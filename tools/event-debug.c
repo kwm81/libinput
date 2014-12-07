@@ -37,8 +37,11 @@
 #include <sys/ioctl.h>
 #ifdef __linux__
 #include <sys/signalfd.h>
+#else
+#include <sys/event.h>
 #endif
 
+#include <libevdev/libevdev.h>
 #include <libinput.h>
 
 static enum {
@@ -457,43 +460,52 @@ handle_and_print_events(struct libinput *li)
 static void
 mainloop(struct libinput *li)
 {
-	struct pollfd fds[2];
 	sigset_t mask;
-
-	fds[0].fd = libinput_get_fd(li);
-	fds[0].events = POLLIN;
-	fds[0].revents = 0;
 
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);
+	sigprocmask(SIG_BLOCK, &mask, NULL);
 
 #ifdef __linux__
+	struct pollfd fds[2];
+
+	fds[0].fd = libevdev_get_fd(li);
+	fds[0].events = POLLIN;
+	fds[0].revents = 0;
+
 	fds[1].fd = signalfd(-1, &mask, SFD_NONBLOCK);
 	fds[1].events = POLLIN;
 	fds[1].revents = 0;
 #else
-	fds[1].fd = -1;
-#endif
+	int kq = kqueue();
+	struct kevent evlist[2];
 
-	if (fds[1].fd == -1 ||
-	    sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
-		fprintf(stderr, "Failed to set up signal handling (%s)\n",
-				strerror(errno));
-	}
+	EV_SET(&evlist[0], SIGINT, EVFILT_SIGNAL, EV_ADD, 0, 0, 0);
+	EV_SET(&evlist[1], libevdev_get_fd(li), EVFILT_READ, EV_ADD, 0, 0, 0);
+
+	kevent(kq, evlist, 2, NULL, 0, NULL);
+#endif
 
 	/* Handle already-pending device added events */
 	if (handle_and_print_events(li))
 		fprintf(stderr, "Expected device added events on startup but got none. "
 				"Maybe you don't have the right permissions?\n");
 
+#ifdef __linux__
 	while (poll(fds, 2, -1) > -1) {
 		if (fds[1].revents)
 			break;
-
+#else
+	while (kevent(kq, NULL, 0, evlist, 1, NULL) == 1) {
+		if (evlist[0].filter == EVFILT_SIGNAL)
+			break;
+#endif
 		handle_and_print_events(li);
 	}
 
+#ifdef __linux__
 	close(fds[1].fd);
+#endif
 }
 
 int
