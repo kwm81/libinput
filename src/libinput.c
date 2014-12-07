@@ -518,13 +518,11 @@ libinput_init(struct libinput *libinput,
 {
 #ifdef __linux__
 	libinput->epoll_fd = epoll_create1(EPOLL_CLOEXEC);;
-	if (libinput->epoll_fd < 0)
-		return -1;
 #else
 	libinput->epoll_fd = kqueue();
-	if (libinput->epoll_fd == -1)
-		return -1;
 #endif
+	if (libinput->epoll_fd < 0)
+		return -1;
 
 	libinput->events_len = 4;
 	libinput->events = zalloc(libinput->events_len * sizeof(*libinput->events));
@@ -770,8 +768,9 @@ libinput_dispatch(struct libinput *libinput)
 	count = epoll_wait(libinput->epoll_fd, ep, ARRAY_LENGTH(ep), 0);
 #else
 	struct kevent evlist[32];
+	struct timespec ts = {0};
 	count = kevent(libinput->epoll_fd, NULL, 0, evlist,
-						ARRAY_LENGTH(evlist), 0);
+                       ARRAY_LENGTH(evlist), &ts);
 #endif
 	if (count < 0)
 		return -errno;
