@@ -69,18 +69,18 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 	if (r) {
 #else
 	uint64_t now = libinput_now(timer->libinput);
-	struct kevent evlist[1];
+	struct kevent chlist[3];
+	int nchanges = 0;
+	EV_SET(&chlist[nchanges++], 1, EVFILT_TIMER, EV_ADD, 0, 0, 0);
+	EV_SET(&chlist[nchanges++], 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
 	if (earliest_expire != UINT64_MAX) {
-		if (earliest_expire >= now) {
-			EV_SET(&evlist[0], 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, earliest_expire - now, libinput->timer.source);
-		} else {
-			EV_SET(&evlist[0], 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, 0, libinput->timer.source);
-		}
-	} else {
-		EV_SET(&evlist[0], 1, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
+		EV_SET(&chlist[nchanges++], 1, EVFILT_TIMER,
+		       EV_ADD | EV_ONESHOT, 0,
+		       earliest_expire >= now ? earliest_expire - now : 0,
+		       libinput->timer.source);
 	}
 
-	if (kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL) == -1) {
+	if (kevent(libinput->epoll_fd, chlist, nchanges, NULL, 0, NULL) == -1) {
 #endif
 		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
 	}
