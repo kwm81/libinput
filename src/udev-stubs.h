@@ -13,14 +13,14 @@
 
 struct udev_device {
   int refcount;
-  char const *syspath;
+  char syspath[32];
   char const *sysname;
 };
 struct udev {
   int refcount;
 };
 struct udev_list_entry {
-  char const *path;
+  char path[32];
   struct udev_list_entry *next;
 };
 struct udev_monitor {
