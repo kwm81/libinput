@@ -1,6 +1,7 @@
 #include "udev-stubs.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <libevdev/libevdev.h>
 
 #include "libinput-util.h"
@@ -105,6 +106,16 @@ char const *udev_device_get_property_value(struct udev_device *dev,
         libevdev_has_event_code(evdev, EV_KEY, BTN_MOUSE)) {
       retval = (char const *)1;
     }
+  } else if (strcmp("ID_INPUT_KEYBOARD", property) == 0) {
+    bool is_keyboard = true;
+    for (int i = KEY_ESC; i <= KEY_D; ++i) {
+      if (!libevdev_has_event_code(evdev, EV_KEY, i)) {
+        is_keyboard = false;
+        break;
+      }
+    }
+    if (is_keyboard)
+      retval = (char const *)1;
   }
 
   libevdev_free(evdev);
