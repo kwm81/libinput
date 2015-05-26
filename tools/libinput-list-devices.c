@@ -285,7 +285,7 @@ main(int argc, char **argv)
 
 	if (argc > 1) {
 		if (streq(argv[1], "--help")) {
-			usage();
+			usage(argv[0]);
 			return 0;
 		} else if (streq(argv[1], "--version")) {
 			printf("%s\n", LIBINPUT_VERSION);

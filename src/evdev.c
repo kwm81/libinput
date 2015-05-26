@@ -1796,8 +1796,10 @@ evdev_configure_mt_device(struct evdev_device *device)
 	for (slot = 0; slot < num_slots; ++slot) {
 		slots[slot].seat_slot = -1;
 
+#ifdef __linux__
 		if (evdev_need_mtdev(device))
 			continue;
+#endif
 
 		slots[slot].point.x = libevdev_get_slot_value(evdev,
 							      slot,
