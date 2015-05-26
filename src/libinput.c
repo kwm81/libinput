@@ -26,7 +26,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __linux__
 #include <sys/epoll.h>
+#else
+#include <sys/types.h>
+#include <sys/event.h>
+#endif
 #include <unistd.h>
 #include <assert.h>
 
@@ -642,7 +647,6 @@ libinput_add_fd(struct libinput *libinput,
 		void *user_data)
 {
 	struct libinput_source *source;
-	struct epoll_event ep;
 
 	source = zalloc(sizeof *source);
 	if (!source)
@@ -652,6 +656,9 @@ libinput_add_fd(struct libinput *libinput,
 	source->user_data = user_data;
 	source->fd = fd;
 
+#ifdef __linux__
+	struct epoll_event ep;
+
 	memset(&ep, 0, sizeof ep);
 	ep.events = EPOLLIN;
 	ep.data.ptr = source;
@@ -660,6 +667,18 @@ libinput_add_fd(struct libinput *libinput,
 		free(source);
 		return NULL;
 	}
+#else
+	if (fd == -2)
+		return source;
+
+	struct kevent evlist[1];
+	EV_SET(&evlist[0], fd, EVFILT_READ, EV_ADD, 0, 0, source);
+
+	if (kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL) == -1) {
+		free(source);
+		return NULL;
+	}
+#endif
 
 	return source;
 }
@@ -668,7 +687,13 @@ void
 libinput_remove_source(struct libinput *libinput,
 		       struct libinput_source *source)
 {
+#ifdef __linux__
 	epoll_ctl(libinput->epoll_fd, EPOLL_CTL_DEL, source->fd, NULL);
+#else
+	struct kevent evlist[1];
+	EV_SET(&evlist[0], source->fd, EVFILT_READ, EV_DELETE, 0, 0, 0);
+	kevent(libinput->epoll_fd, evlist, 1, NULL, 0, NULL);
+#endif
 	source->fd = -1;
 	list_insert(&libinput->source_destroy_list, &source->link);
 }
@@ -679,7 +704,11 @@ libinput_init(struct libinput *libinput,
 	      const struct libinput_interface_backend *interface_backend,
 	      void *user_data)
 {
+#ifdef __linux__
 	libinput->epoll_fd = epoll_create1(EPOLL_CLOEXEC);;
+#else
+	libinput->epoll_fd = kqueue();
+#endif
 	if (libinput->epoll_fd < 0)
 		return -1;
 
@@ -691,7 +720,7 @@ libinput_init(struct libinput *libinput,
 	}
 
 	libinput->log_handler = libinput_default_log_func;
-	libinput->log_priority = LIBINPUT_LOG_PRIORITY_ERROR;
+	libinput->log_priority = LIBINPUT_LOG_PRIORITY_DEBUG;
 	libinput->interface = interface;
 	libinput->interface_backend = interface_backend;
 	libinput->user_data = user_data;
@@ -920,15 +949,26 @@ LIBINPUT_EXPORT int
 libinput_dispatch(struct libinput *libinput)
 {
 	struct libinput_source *source;
-	struct epoll_event ep[32];
 	int i, count;
 
+#ifdef __linux__
+	struct epoll_event ep[32];
 	count = epoll_wait(libinput->epoll_fd, ep, ARRAY_LENGTH(ep), 0);
+#else
+	struct kevent evlist[32];
+	struct timespec ts = {0};
+	count = kevent(libinput->epoll_fd, NULL, 0, evlist,
+                       ARRAY_LENGTH(evlist), &ts);
+#endif
 	if (count < 0)
 		return -errno;
 
 	for (i = 0; i < count; ++i) {
+#ifdef __linux__
 		source = ep[i].data.ptr;
+#else
+		source = evlist[i].udata;
+#endif
 		if (source->fd == -1)
 			continue;
 

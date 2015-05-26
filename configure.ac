@@ -46,19 +46,11 @@ AC_PROG_GREP
 LT_PREREQ([2.2])
 LT_INIT
 
-AC_CHECK_DECL(EPOLL_CLOEXEC, [],
-	      [AC_MSG_ERROR("EPOLL_CLOEXEC is needed to compile libinput")],
-	      [[#include <sys/epoll.h>]])
-AC_CHECK_DECL(TFD_CLOEXEC,[],
-	      [AC_MSG_ERROR("TFD_CLOEXEC is needed to compile libinput")],
-	      [[#include <sys/timerfd.h>]])
 AC_CHECK_DECL(CLOCK_MONOTONIC,[],
 	      [AC_MSG_ERROR("CLOCK_MONOTONIC is needed to compile libinput")],
 	      [[#include <time.h>]])
 
 PKG_PROG_PKG_CONFIG()
-PKG_CHECK_MODULES(MTDEV, [mtdev >= 1.1.0])
-PKG_CHECK_MODULES(LIBUDEV, [libudev])
 PKG_CHECK_MODULES(LIBEVDEV, [libevdev >= 0.4])
 PKG_CHECK_MODULES(LIBUNWIND,
 		  [libunwind],

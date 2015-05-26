@@ -154,9 +154,9 @@ print_accel_func(struct motion_filter *filter)
 }
 
 static void
-usage(void)
+usage(const char *argv0)
 {
-	printf("Usage: %s [options] [dx1] [dx2] [...] > gnuplot.data\n", program_invocation_short_name);
+	printf("Usage: %s [options] [dx1] [dx2] [...] > gnuplot.data\n", argv0);
 	printf("\n"
 	       "Options:\n"
 	       "--mode=<motion|accel|delta|sequence> \n"
@@ -229,28 +229,28 @@ main(int argc, char **argv)
 			else if (streq(optarg, "sequence"))
 				print_sequence = true;
 			else {
-				usage();
+				usage(argv[0]);
 				return 1;
 			}
 			break;
 		case OPT_NEVENTS:
 			nevents = atoi(optarg);
 			if (nevents == 0) {
-				usage();
+				usage(argv[0]);
 				return 1;
 			}
 			break;
 		case OPT_MAXDX:
 			max_dx = strtod(optarg, NULL);
 			if (max_dx == 0.0) {
-				usage();
+				usage(argv[0]);
 				return 1;
 			}
 			break;
 		case OPT_STEP:
 			step = strtod(optarg, NULL);
 			if (step == 0.0) {
-				usage();
+				usage(argv[0]);
 				return 1;
 			}
 			break;
@@ -258,7 +258,7 @@ main(int argc, char **argv)
 			speed = strtod(optarg, NULL);
 			break;
 		default:
-			usage();
+			usage(argv[0]);
 			exit(1);
 			break;
 		}
