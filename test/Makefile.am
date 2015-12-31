@@ -13,32 +13,41 @@ noinst_LTLIBRARIES = liblitest.la
 liblitest_la_SOURCES = \
 	litest.h \
 	litest-int.h \
-	litest-alps-semi-mt.c \
-	litest-atmel-hover.c \
-	litest-bcm5974.c \
-	litest-generic-singletouch.c \
-	litest-keyboard.c \
-	litest-keyboard-razer-blackwidow.c \
-	litest-logitech-trackball.c \
-	litest-mouse.c \
-	litest-mouse-roccat.c \
-	litest-ms-surface-cover.c \
-	litest-protocol-a-touch-screen.c \
-	litest-qemu-usb-tablet.c \
-	litest-synaptics.c \
-	litest-synaptics-hover.c \
-	litest-synaptics-st.c \
-	litest-synaptics-t440.c \
-	litest-synaptics-x1-carbon-3rd.c \
-	litest-trackpoint.c \
-	litest-wacom-touch.c \
-	litest-wacom-intuos-finger.c \
-	litest-wheel-only.c \
-	litest-xen-virtual-pointer.c \
-	litest-vmware-virtual-usb-mouse.c \
+	litest-device-alps-semi-mt.c \
+	litest-device-alps-dualpoint.c \
+	litest-device-atmel-hover.c \
+	litest-device-bcm5974.c \
+	litest-device-elantech-touchpad.c \
+	litest-device-generic-singletouch.c \
+	litest-device-keyboard.c \
+	litest-device-keyboard-razer-blackwidow.c \
+	litest-device-logitech-trackball.c \
+	litest-device-nexus4-touch-screen.c \
+	litest-device-magic-trackpad.c \
+	litest-device-mouse.c \
+	litest-device-mouse-roccat.c \
+	litest-device-mouse-low-dpi.c \
+	litest-device-ms-surface-cover.c \
+	litest-device-protocol-a-touch-screen.c \
+	litest-device-qemu-usb-tablet.c \
+	litest-device-synaptics.c \
+	litest-device-synaptics-hover.c \
+	litest-device-synaptics-st.c \
+	litest-device-synaptics-t440.c \
+	litest-device-synaptics-x1-carbon-3rd.c \
+	litest-device-trackpoint.c \
+	litest-device-touch-screen.c \
+	litest-device-wacom-touch.c \
+	litest-device-wacom-intuos-finger.c \
+	litest-device-wheel-only.c \
+	litest-device-xen-virtual-pointer.c \
+	litest-device-vmware-virtual-usb-mouse.c \
 	litest.c
 liblitest_la_LIBADD = $(top_builddir)/src/libinput-util.la
-liblitest_la_CFLAGS = $(AM_CFLAGS)
+liblitest_la_CFLAGS = $(AM_CFLAGS) \
+	      -DLIBINPUT_MODEL_QUIRKS_UDEV_RULES_FILE="\"$(abs_top_builddir)/udev/90-libinput-model-quirks-litest.rules\"" \
+	      -DLIBINPUT_MODEL_QUIRKS_UDEV_HWDB_FILE="\"$(abs_top_srcdir)/udev/90-libinput-model-quirks.hwdb\"" \
+	      -DLIBINPUT_TEST_DEVICE_RULES_FILE="\"$(abs_top_srcdir)/udev/80-libinput-test-device.rules\""
 if HAVE_LIBUNWIND
 liblitest_la_LIBADD += $(LIBUNWIND_LIBS) -ldl
 liblitest_la_CFLAGS += $(LIBUNWIND_CFLAGS)
@@ -46,7 +55,10 @@ endif
 
 run_tests = \
 	test-touchpad \
+	test-touchpad-tap \
+	test-touchpad-buttons \
 	test-device \
+	test-gestures \
 	test-pointer \
 	test-touch \
 	test-trackpoint \
@@ -93,6 +105,14 @@ test_touchpad_SOURCES = touchpad.c
 test_touchpad_LDADD = $(TEST_LIBS)
 test_touchpad_LDFLAGS = -no-install
 
+test_touchpad_tap_SOURCES = touchpad-tap.c
+test_touchpad_tap_LDADD = $(TEST_LIBS)
+test_touchpad_tap_LDFLAGS = -no-install
+
+test_touchpad_buttons_SOURCES = touchpad-buttons.c
+test_touchpad_buttons_LDADD = $(TEST_LIBS)
+test_touchpad_buttons_LDFLAGS = -no-install
+
 test_trackpoint_SOURCES = trackpoint.c
 test_trackpoint_LDADD = $(TEST_LIBS)
 test_trackpoint_LDFLAGS = -no-install
@@ -109,10 +129,18 @@ test_device_SOURCES = device.c
 test_device_LDADD = $(TEST_LIBS)
 test_device_LDFLAGS = -no-install
 
+test_gestures_SOURCES = gestures.c
+test_gestures_LDADD = $(TEST_LIBS)
+test_gestures_LDFLAGS = -no-install
+
 test_litest_selftest_SOURCES = litest-selftest.c litest.c litest-int.h litest.h
-test_litest_selftest_CFLAGS = -DLITEST_DISABLE_BACKTRACE_LOGGING -DLITEST_NO_MAIN
+test_litest_selftest_CFLAGS = -DLITEST_DISABLE_BACKTRACE_LOGGING -DLITEST_NO_MAIN $(liblitest_la_CFLAGS)
 test_litest_selftest_LDADD = $(TEST_LIBS)
 test_litest_selftest_LDFLAGS = -no-install
+if HAVE_LIBUNWIND
+test_litest_selftest_LDADD += $(LIBUNWIND_LIBS) -ldl
+test_litest_selftest_CFLAGS += $(LIBUNWIND_CFLAGS)
+endif
 
 # build-test only
 test_build_pedantic_c99_SOURCES = build-pedantic.c

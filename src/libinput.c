@@ -1,23 +1,25 @@
 /*
  * Copyright © 2013 Jonas Ådahl
+ * Copyright © 2013-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #include "config.h"
@@ -89,7 +91,7 @@ struct libinput_event_device_notify {
 
 struct libinput_event_keyboard {
 	struct libinput_event base;
-	uint32_t time;
+	uint64_t time;
 	uint32_t key;
 	uint32_t seat_key_count;
 	enum libinput_key_state state;
@@ -97,9 +99,9 @@ struct libinput_event_keyboard {
 
 struct libinput_event_pointer {
 	struct libinput_event base;
-	uint32_t time;
+	uint64_t time;
 	struct normalized_coords delta;
-	struct normalized_coords delta_unaccel;
+	struct device_float_coords delta_raw;
 	struct device_coords absolute;
 	struct discrete_coords discrete;
 	uint32_t button;
@@ -111,10 +113,21 @@ struct libinput_event_pointer {
 
 struct libinput_event_touch {
 	struct libinput_event base;
-	uint32_t time;
+	uint64_t time;
 	int32_t slot;
 	int32_t seat_slot;
 	struct device_coords point;
+};
+
+struct libinput_event_gesture {
+	struct libinput_event base;
+	uint64_t time;
+	int finger_count;
+	int cancelled;
+	struct normalized_coords delta;
+	struct normalized_coords delta_unaccel;
+	double scale;
+	double angle;
 };
 
 static void
@@ -158,6 +171,31 @@ log_msg(struct libinput *libinput,
 	va_end(args);
 }
 
+void
+log_msg_ratelimit(struct libinput *libinput,
+		  struct ratelimit *ratelimit,
+		  enum libinput_log_priority priority,
+		  const char *format, ...)
+{
+	va_list args;
+	enum ratelimit_state state;
+
+	state = ratelimit_test(ratelimit);
+	if (state == RATELIMIT_EXCEEDED)
+		return;
+
+	va_start(args, format);
+	log_msg_va(libinput, priority, format, args);
+	va_end(args);
+
+	if (state == RATELIMIT_THRESHOLD)
+		log_msg(libinput,
+			priority,
+			"WARNING: log rate limit exceeded (%d msgs per %dms). Discarding future messages.\n",
+			ratelimit->burst,
+			us2ms(ratelimit->interval));
+}
+
 LIBINPUT_EXPORT void
 libinput_log_set_priority(struct libinput *libinput,
 			  enum libinput_log_priority priority)
@@ -177,6 +215,9 @@ libinput_log_set_handler(struct libinput *libinput,
 {
 	libinput->log_handler = log_handler;
 }
+
+static void
+libinput_device_group_destroy(struct libinput_device_group *group);
 
 static void
 libinput_post_event(struct libinput *libinput,
@@ -240,6 +281,22 @@ libinput_event_get_touch_event(struct libinput_event *event)
 	return (struct libinput_event_touch *) event;
 }
 
+LIBINPUT_EXPORT struct libinput_event_gesture *
+libinput_event_get_gesture_event(struct libinput_event *event)
+{
+	require_event_type(libinput_event_get_context(event),
+			   event->type,
+			   NULL,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END);
+
+	return (struct libinput_event_gesture *) event;
+}
+
 LIBINPUT_EXPORT struct libinput_event_device_notify *
 libinput_event_get_device_notify_event(struct libinput_event *event)
 {
@@ -254,6 +311,17 @@ libinput_event_get_device_notify_event(struct libinput_event *event)
 
 LIBINPUT_EXPORT uint32_t
 libinput_event_keyboard_get_time(struct libinput_event_keyboard *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_KEYBOARD_KEY);
+
+	return us2ms(event->time);
+}
+
+LIBINPUT_EXPORT uint64_t
+libinput_event_keyboard_get_time_usec(struct libinput_event_keyboard *event)
 {
 	require_event_type(libinput_event_get_context(&event->base),
 			   event->base.type,
@@ -308,6 +376,20 @@ libinput_event_pointer_get_time(struct libinput_event_pointer *event)
 			   LIBINPUT_EVENT_POINTER_BUTTON,
 			   LIBINPUT_EVENT_POINTER_AXIS);
 
+	return us2ms(event->time);
+}
+
+LIBINPUT_EXPORT uint64_t
+libinput_event_pointer_get_time_usec(struct libinput_event_pointer *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_POINTER_MOTION,
+			   LIBINPUT_EVENT_POINTER_MOTION_ABSOLUTE,
+			   LIBINPUT_EVENT_POINTER_BUTTON,
+			   LIBINPUT_EVENT_POINTER_AXIS);
+
 	return event->time;
 }
 
@@ -342,7 +424,7 @@ libinput_event_pointer_get_dx_unaccelerated(
 			   0,
 			   LIBINPUT_EVENT_POINTER_MOTION);
 
-	return event->delta_unaccel.x;
+	return event->delta_raw.x;
 }
 
 LIBINPUT_EXPORT double
@@ -354,7 +436,7 @@ libinput_event_pointer_get_dy_unaccelerated(
 			   0,
 			   LIBINPUT_EVENT_POINTER_MOTION);
 
-	return event->delta_unaccel.y;
+	return event->delta_raw.y;
 }
 
 LIBINPUT_EXPORT double
@@ -547,6 +629,21 @@ libinput_event_touch_get_time(struct libinput_event_touch *event)
 			   LIBINPUT_EVENT_TOUCH_CANCEL,
 			   LIBINPUT_EVENT_TOUCH_FRAME);
 
+	return us2ms(event->time);
+}
+
+LIBINPUT_EXPORT uint64_t
+libinput_event_touch_get_time_usec(struct libinput_event_touch *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_TOUCH_DOWN,
+			   LIBINPUT_EVENT_TOUCH_UP,
+			   LIBINPUT_EVENT_TOUCH_MOTION,
+			   LIBINPUT_EVENT_TOUCH_CANCEL,
+			   LIBINPUT_EVENT_TOUCH_FRAME);
+
 	return event->time;
 }
 
@@ -640,6 +737,158 @@ libinput_event_touch_get_y(struct libinput_event_touch *event)
 	return evdev_convert_to_mm(device->abs.absinfo_y, event->point.y);
 }
 
+LIBINPUT_EXPORT uint32_t
+libinput_event_gesture_get_time(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return us2ms(event->time);
+}
+
+LIBINPUT_EXPORT uint64_t
+libinput_event_gesture_get_time_usec(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->time;
+}
+
+LIBINPUT_EXPORT int
+libinput_event_gesture_get_finger_count(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->finger_count;
+}
+
+LIBINPUT_EXPORT int
+libinput_event_gesture_get_cancelled(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->cancelled;
+}
+
+LIBINPUT_EXPORT double
+libinput_event_gesture_get_dx(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0.0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->delta.x;
+}
+
+LIBINPUT_EXPORT double
+libinput_event_gesture_get_dy(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0.0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->delta.y;
+}
+
+LIBINPUT_EXPORT double
+libinput_event_gesture_get_dx_unaccelerated(
+	struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0.0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->delta_unaccel.x;
+}
+
+LIBINPUT_EXPORT double
+libinput_event_gesture_get_dy_unaccelerated(
+	struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0.0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_SWIPE_END);
+
+	return event->delta_unaccel.y;
+}
+
+LIBINPUT_EXPORT double
+libinput_event_gesture_get_scale(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0.0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END);
+
+	return event->scale;
+}
+
+LIBINPUT_EXPORT double
+libinput_event_gesture_get_angle_delta(struct libinput_event_gesture *event)
+{
+	require_event_type(libinput_event_get_context(&event->base),
+			   event->base.type,
+			   0.0,
+			   LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+			   LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+			   LIBINPUT_EVENT_GESTURE_PINCH_END);
+
+	return event->angle;
+}
+
 struct libinput_source *
 libinput_add_fd(struct libinput *libinput,
 		int fd,
@@ -727,6 +976,7 @@ libinput_init(struct libinput *libinput,
 	libinput->refcount = 1;
 	list_init(&libinput->source_destroy_list);
 	list_init(&libinput->seat_list);
+	list_init(&libinput->device_group_list);
 
 	if (libinput_timer_subsys_init(libinput) != 0) {
 		free(libinput->events);
@@ -766,6 +1016,7 @@ libinput_unref(struct libinput *libinput)
 	struct libinput_event *event;
 	struct libinput_device *device, *next_device;
 	struct libinput_seat *seat, *next_seat;
+	struct libinput_device_group *group, *next_group;
 
 	if (libinput == NULL)
 		return NULL;
@@ -791,6 +1042,13 @@ libinput_unref(struct libinput *libinput)
 			libinput_device_destroy(device);
 
 		libinput_seat_destroy(seat);
+	}
+
+	list_for_each_safe(group,
+			   next_group,
+			   &libinput->device_group_list,
+			   link) {
+		libinput_device_group_destroy(group);
 	}
 
 	libinput_timer_subsys_destroy(libinput);
@@ -826,6 +1084,16 @@ void
 close_restricted(struct libinput *libinput, int fd)
 {
 	return libinput->interface->close_restricted(fd, libinput->user_data);
+}
+
+bool
+ignore_litest_test_suite_device(struct udev_device *device)
+{
+	if (!getenv("LIBINPUT_RUNNING_TEST_SUITE") &&
+	    udev_device_get_property_value(device, "LIBINPUT_TEST_DEVICE"))
+		return true;
+
+	return false;
 }
 
 void
@@ -1124,6 +1392,9 @@ device_has_cap(struct libinput_device *device,
 	case LIBINPUT_DEVICE_CAP_TOUCH:
 		capability = "CAP_TOUCH";
 		break;
+	case LIBINPUT_DEVICE_CAP_GESTURE:
+		capability = "CAP_GESTURE";
+		break;
 	}
 
 	log_bug_libinput(device->seat->libinput,
@@ -1168,7 +1439,7 @@ void
 pointer_notify_motion(struct libinput_device *device,
 		      uint64_t time,
 		      const struct normalized_coords *delta,
-		      const struct normalized_coords *unaccel)
+		      const struct device_float_coords *raw)
 {
 	struct libinput_event_pointer *motion_event;
 
@@ -1182,7 +1453,7 @@ pointer_notify_motion(struct libinput_device *device,
 	*motion_event = (struct libinput_event_pointer) {
 		.time = time,
 		.delta = *delta,
-		.delta_unaccel = *unaccel,
+		.delta_raw = *raw,
 	};
 
 	post_device_event(device, time,
@@ -1381,6 +1652,89 @@ touch_notify_frame(struct libinput_device *device,
 }
 
 static void
+gesture_notify(struct libinput_device *device,
+	       uint64_t time,
+	       enum libinput_event_type type,
+	       int finger_count,
+	       int cancelled,
+	       const struct normalized_coords *delta,
+	       const struct normalized_coords *unaccel,
+	       double scale,
+	       double angle)
+{
+	struct libinput_event_gesture *gesture_event;
+
+	if (!device_has_cap(device, LIBINPUT_DEVICE_CAP_GESTURE))
+		return;
+
+	gesture_event = zalloc(sizeof *gesture_event);
+	if (!gesture_event)
+		return;
+
+	*gesture_event = (struct libinput_event_gesture) {
+		.time = time,
+		.finger_count = finger_count,
+		.cancelled = cancelled,
+		.delta = *delta,
+		.delta_unaccel = *unaccel,
+		.scale = scale,
+		.angle = angle,
+	};
+
+	post_device_event(device, time, type,
+			  &gesture_event->base);
+}
+
+void
+gesture_notify_swipe(struct libinput_device *device,
+		     uint64_t time,
+		     enum libinput_event_type type,
+		     int finger_count,
+		     const struct normalized_coords *delta,
+		     const struct normalized_coords *unaccel)
+{
+	gesture_notify(device, time, type, finger_count, 0, delta, unaccel,
+		       0.0, 0.0);
+}
+
+void
+gesture_notify_swipe_end(struct libinput_device *device,
+			 uint64_t time,
+			 int finger_count,
+			 int cancelled)
+{
+	const struct normalized_coords zero = { 0.0, 0.0 };
+
+	gesture_notify(device, time, LIBINPUT_EVENT_GESTURE_SWIPE_END,
+		       finger_count, cancelled, &zero, &zero, 0.0, 0.0);
+}
+
+void
+gesture_notify_pinch(struct libinput_device *device,
+		     uint64_t time,
+		     enum libinput_event_type type,
+		     const struct normalized_coords *delta,
+		     const struct normalized_coords *unaccel,
+		     double scale,
+		     double angle)
+{
+	gesture_notify(device, time, type, 2, 0, delta, unaccel,
+		       scale, angle);
+}
+
+void
+gesture_notify_pinch_end(struct libinput_device *device,
+			 uint64_t time,
+			 double scale,
+			 int cancelled)
+{
+	const struct normalized_coords zero = { 0.0, 0.0 };
+
+	gesture_notify(device, time, LIBINPUT_EVENT_GESTURE_PINCH_END,
+		       2, cancelled, &zero, &zero, scale, 0.0);
+}
+
+static void
 libinput_post_event(struct libinput *libinput,
 		    struct libinput_event *event)
 {
@@ -1395,8 +1749,9 @@ libinput_post_event(struct libinput *libinput,
 		events_len *= 2;
 		events = realloc(events, events_len * sizeof *events);
 		if (!events) {
-			fprintf(stderr, "Failed to reallocate event ring "
-				"buffer");
+			log_error(libinput,
+				  "Failed to reallocate event ring buffer. "
+				  "Events may be discarded\n");
 			return;
 		}
 
@@ -1645,6 +2000,12 @@ libinput_event_touch_get_base_event(struct libinput_event_touch *event)
 	return &event->base;
 }
 
+LIBINPUT_EXPORT struct libinput_event *
+libinput_event_gesture_get_base_event(struct libinput_event_gesture *event)
+{
+	return &event->base;
+}
+
 LIBINPUT_EXPORT struct libinput_device_group *
 libinput_device_group_ref(struct libinput_device_group *group)
 {
@@ -1653,7 +2014,8 @@ libinput_device_group_ref(struct libinput_device_group *group)
 }
 
 struct libinput_device_group *
-libinput_device_group_create(const char *identifier)
+libinput_device_group_create(struct libinput *libinput,
+			     const char *identifier)
 {
 	struct libinput_device_group *group;
 
@@ -1666,11 +2028,30 @@ libinput_device_group_create(const char *identifier)
 		group->identifier = strdup(identifier);
 		if (!group->identifier) {
 			free(group);
-			group = NULL;
+			return NULL;
 		}
 	}
 
+	list_init(&group->link);
+	list_insert(&libinput->device_group_list, &group->link);
+
 	return group;
+}
+
+struct libinput_device_group *
+libinput_device_group_find_group(struct libinput *libinput,
+				 const char *identifier)
+{
+	struct libinput_device_group *g = NULL;
+
+	list_for_each(g, &libinput->device_group_list, link) {
+		if (identifier && g->identifier &&
+		    streq(g->identifier, identifier)) {
+			return g;
+		}
+	}
+
+	return g;
 }
 
 void
@@ -1684,6 +2065,7 @@ libinput_device_set_device_group(struct libinput_device *device,
 static void
 libinput_device_group_destroy(struct libinput_device_group *group)
 {
+	list_remove(&group->link);
 	free(group->identifier);
 	free(group);
 }
@@ -1772,6 +2154,39 @@ libinput_device_config_tap_get_default_enabled(struct libinput_device *device)
 		return LIBINPUT_CONFIG_TAP_DISABLED;
 
 	return device->config.tap->get_default(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_status
+libinput_device_config_tap_set_drag_lock_enabled(struct libinput_device *device,
+						 enum libinput_config_drag_lock_state enable)
+{
+	if (enable != LIBINPUT_CONFIG_DRAG_LOCK_ENABLED &&
+	    enable != LIBINPUT_CONFIG_DRAG_LOCK_DISABLED)
+		return LIBINPUT_CONFIG_STATUS_INVALID;
+
+	if (libinput_device_config_tap_get_finger_count(device) == 0)
+		return enable ? LIBINPUT_CONFIG_STATUS_UNSUPPORTED :
+				LIBINPUT_CONFIG_STATUS_SUCCESS;
+
+	return device->config.tap->set_draglock_enabled(device, enable);
+}
+
+LIBINPUT_EXPORT enum libinput_config_drag_lock_state
+libinput_device_config_tap_get_drag_lock_enabled(struct libinput_device *device)
+{
+	if (libinput_device_config_tap_get_finger_count(device) == 0)
+		return LIBINPUT_CONFIG_DRAG_LOCK_DISABLED;
+
+	return device->config.tap->get_draglock_enabled(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_drag_lock_state
+libinput_device_config_tap_get_default_drag_lock_enabled(struct libinput_device *device)
+{
+	if (libinput_device_config_tap_get_finger_count(device) == 0)
+		return LIBINPUT_CONFIG_DRAG_LOCK_DISABLED;
+
+	return device->config.tap->get_default_draglock_enabled(device);
 }
 
 LIBINPUT_EXPORT int
@@ -1870,7 +2285,6 @@ libinput_device_config_accel_set_speed(struct libinput_device *device,
 
 	return device->config.accel->set_speed(device, speed);
 }
-
 LIBINPUT_EXPORT double
 libinput_device_config_accel_get_speed(struct libinput_device *device)
 {
@@ -1887,6 +2301,52 @@ libinput_device_config_accel_get_default_speed(struct libinput_device *device)
 		return 0;
 
 	return device->config.accel->get_default_speed(device);
+}
+
+LIBINPUT_EXPORT uint32_t
+libinput_device_config_accel_get_profiles(struct libinput_device *device)
+{
+	if (!libinput_device_config_accel_is_available(device))
+		return 0;
+
+	return device->config.accel->get_profiles(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_accel_profile
+libinput_device_config_accel_get_profile(struct libinput_device *device)
+{
+	if (!libinput_device_config_accel_is_available(device))
+		return LIBINPUT_CONFIG_ACCEL_PROFILE_NONE;
+
+	return device->config.accel->get_profile(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_accel_profile
+libinput_device_config_accel_get_default_profile(struct libinput_device *device)
+{
+	if (!libinput_device_config_accel_is_available(device))
+		return LIBINPUT_CONFIG_ACCEL_PROFILE_NONE;
+
+	return device->config.accel->get_profile(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_status
+libinput_device_config_accel_set_profile(struct libinput_device *device,
+					 enum libinput_config_accel_profile profile)
+{
+	switch (profile) {
+	case LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT:
+	case LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE:
+		break;
+	default:
+		return LIBINPUT_CONFIG_STATUS_INVALID;
+	}
+
+	if (!libinput_device_config_accel_is_available(device) ||
+	    (libinput_device_config_accel_get_profiles(device) & profile) == 0)
+		return LIBINPUT_CONFIG_STATUS_UNSUPPORTED;
+
+	return device->config.accel->set_profile(device, profile);
 }
 
 LIBINPUT_EXPORT int
@@ -2150,4 +2610,46 @@ libinput_device_config_scroll_get_default_button(struct libinput_device *device)
 		return 0;
 
 	return device->config.scroll_method->get_default_button(device);
+}
+
+LIBINPUT_EXPORT int
+libinput_device_config_dwt_is_available(struct libinput_device *device)
+{
+	if (!device->config.dwt)
+		return 0;
+
+	return device->config.dwt->is_available(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_status
+libinput_device_config_dwt_set_enabled(struct libinput_device *device,
+				       enum libinput_config_dwt_state enable)
+{
+	if (enable != LIBINPUT_CONFIG_DWT_ENABLED &&
+	    enable != LIBINPUT_CONFIG_DWT_DISABLED)
+		return LIBINPUT_CONFIG_STATUS_INVALID;
+
+	if (!libinput_device_config_dwt_is_available(device))
+		return enable ? LIBINPUT_CONFIG_STATUS_UNSUPPORTED :
+				LIBINPUT_CONFIG_STATUS_SUCCESS;
+
+	return device->config.dwt->set_enabled(device, enable);
+}
+
+LIBINPUT_EXPORT enum libinput_config_dwt_state
+libinput_device_config_dwt_get_enabled(struct libinput_device *device)
+{
+	if (!libinput_device_config_dwt_is_available(device))
+		return LIBINPUT_CONFIG_DWT_DISABLED;
+
+	return device->config.dwt->get_enabled(device);
+}
+
+LIBINPUT_EXPORT enum libinput_config_dwt_state
+libinput_device_config_dwt_get_default_enabled(struct libinput_device *device)
+{
+	if (!libinput_device_config_dwt_is_available(device))
+		return LIBINPUT_CONFIG_DWT_DISABLED;
+
+	return device->config.dwt->get_default_enabled(device);
 }

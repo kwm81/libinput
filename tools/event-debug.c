@@ -1,23 +1,24 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #define _GNU_SOURCE
@@ -41,32 +42,15 @@
 
 #include <libevdev/libevdev.h>
 #include <libinput.h>
+#include <libevdev/libevdev.h>
 
 #include "shared.h"
 
 uint32_t start_time;
 static const uint32_t screen_width = 100;
 static const uint32_t screen_height = 100;
-struct tools_options options;
+struct tools_context context;
 static unsigned int stop = 0;
-
-static int
-open_restricted(const char *path, int flags, void *user_data)
-{
-	int fd = open(path, flags);
-	return fd < 0 ? -errno : fd;
-}
-
-static void
-close_restricted(int fd, void *user_data)
-{
-	close(fd);
-}
-
-static const struct libinput_interface interface = {
-	.open_restricted = open_restricted,
-	.close_restricted = close_restricted,
-};
 
 static void
 print_event_header(struct libinput_event *ev)
@@ -113,6 +97,24 @@ print_event_header(struct libinput_event *ev)
 	case LIBINPUT_EVENT_TOUCH_FRAME:
 		type = "TOUCH_FRAME";
 		break;
+	case LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN:
+		type = "GESTURE_SWIPE_BEGIN";
+		break;
+	case LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE:
+		type = "GESTURE_SWIPE_UPDATE";
+		break;
+	case LIBINPUT_EVENT_GESTURE_SWIPE_END:
+		type = "GESTURE_SWIPE_END";
+		break;
+	case LIBINPUT_EVENT_GESTURE_PINCH_BEGIN:
+		type = "GESTURE_PINCH_BEGIN";
+		break;
+	case LIBINPUT_EVENT_GESTURE_PINCH_UPDATE:
+		type = "GESTURE_PINCH_UPDATE";
+		break;
+	case LIBINPUT_EVENT_GESTURE_PINCH_END:
+		type = "GESTURE_PINCH_END";
+		break;
 	}
 
 	printf("%-7s	%s	", libinput_device_get_sysname(dev), type);
@@ -158,17 +160,25 @@ print_device_notify(struct libinput_event *ev)
 	if (libinput_device_has_capability(dev,
 					   LIBINPUT_DEVICE_CAP_TOUCH))
 		printf("t");
+	if (libinput_device_has_capability(dev,
+					   LIBINPUT_DEVICE_CAP_GESTURE))
+		printf("g");
 
 	if (libinput_device_get_size(dev, &w, &h) == 0)
 		printf("\tsize %.2f/%.2fmm", w, h);
 
-	if (libinput_device_config_tap_get_finger_count((dev)))
+	if (libinput_device_config_tap_get_finger_count(dev)) {
 	    printf(" tap");
-	if (libinput_device_config_left_handed_is_available((dev)))
+	    if (libinput_device_config_tap_get_drag_lock_enabled(dev))
+		    printf("(dl on)");
+	    else
+		    printf("(dl off)");
+	}
+	if (libinput_device_config_left_handed_is_available(dev))
 	    printf(" left");
-	if (libinput_device_config_scroll_has_natural_scroll((dev)))
+	if (libinput_device_config_scroll_has_natural_scroll(dev))
 	    printf(" scroll-nat");
-	if (libinput_device_config_calibration_has_matrix((dev)))
+	if (libinput_device_config_calibration_has_matrix(dev))
 	    printf(" calib");
 
 	scroll_methods = libinput_device_config_scroll_get_methods(dev);
@@ -191,6 +201,14 @@ print_device_notify(struct libinput_event *ev)
 			printf("-clickfinger");
 	}
 
+	if (libinput_device_config_dwt_is_available(dev)) {
+		if (libinput_device_config_dwt_get_enabled(dev) ==
+		    LIBINPUT_CONFIG_DWT_ENABLED)
+			printf(" dwt-on");
+		else
+			printf(" dwt-off)");
+	}
+
 	printf("\n");
 
 }
@@ -200,11 +218,17 @@ print_key_event(struct libinput_event *ev)
 {
 	struct libinput_event_keyboard *k = libinput_event_get_keyboard_event(ev);
 	enum libinput_key_state state;
+	uint32_t key;
+	const char *keyname;
 
 	print_event_time(libinput_event_keyboard_get_time(k));
 	state = libinput_event_keyboard_get_key_state(k);
-	printf("%d %s\n",
-	       libinput_event_keyboard_get_key(k),
+
+	key = libinput_event_keyboard_get_key(k);
+	keyname = libevdev_event_code_get_name(EV_KEY, key);
+	printf("%s (%d) %s\n",
+	       keyname ? keyname : "???",
+	       key,
 	       state == LIBINPUT_KEY_STATE_PRESSED ? "pressed" : "released");
 }
 
@@ -293,6 +317,50 @@ print_touch_event_with_coords(struct libinput_event *ev)
 	       xmm, ymm);
 }
 
+static void
+print_gesture_event_without_coords(struct libinput_event *ev)
+{
+	struct libinput_event_gesture *t = libinput_event_get_gesture_event(ev);
+	int finger_count = libinput_event_gesture_get_finger_count(t);
+	int cancelled = 0;
+	enum libinput_event_type type;
+
+	type = libinput_event_get_type(ev);
+
+	if (type == LIBINPUT_EVENT_GESTURE_SWIPE_END ||
+	    type == LIBINPUT_EVENT_GESTURE_PINCH_END)
+	    cancelled = libinput_event_gesture_get_cancelled(t);
+
+	print_event_time(libinput_event_gesture_get_time(t));
+	printf("%d%s\n", finger_count, cancelled ? " cancelled" : "");
+}
+
+static void
+print_gesture_event_with_coords(struct libinput_event *ev)
+{
+	struct libinput_event_gesture *t = libinput_event_get_gesture_event(ev);
+	double dx = libinput_event_gesture_get_dx(t);
+	double dy = libinput_event_gesture_get_dy(t);
+	double dx_unaccel = libinput_event_gesture_get_dx_unaccelerated(t);
+	double dy_unaccel = libinput_event_gesture_get_dy_unaccelerated(t);
+
+	print_event_time(libinput_event_gesture_get_time(t));
+
+	printf("%d %5.2f/%5.2f (%5.2f/%5.2f unaccelerated)",
+	       libinput_event_gesture_get_finger_count(t),
+	       dx, dy, dx_unaccel, dy_unaccel);
+
+	if (libinput_event_get_type(ev) ==
+	    LIBINPUT_EVENT_GESTURE_PINCH_UPDATE) {
+		double scale = libinput_event_gesture_get_scale(t);
+		double angle = libinput_event_gesture_get_angle_delta(t);
+
+		printf(" %5.2f @ %5.2f\n", scale, angle);
+	} else {
+		printf("\n");
+	}
+}
+
 static int
 handle_and_print_events(struct libinput *li)
 {
@@ -310,7 +378,7 @@ handle_and_print_events(struct libinput *li)
 		case LIBINPUT_EVENT_DEVICE_REMOVED:
 			print_device_notify(ev);
 			tools_device_apply_config(libinput_event_get_device(ev),
-						  &options);
+						  &context.options);
 			break;
 		case LIBINPUT_EVENT_KEYBOARD_KEY:
 			print_key_event(ev);
@@ -341,6 +409,24 @@ handle_and_print_events(struct libinput *li)
 			break;
 		case LIBINPUT_EVENT_TOUCH_FRAME:
 			print_touch_event_without_coords(ev);
+			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN:
+			print_gesture_event_without_coords(ev);
+			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE:
+			print_gesture_event_with_coords(ev);
+			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_END:
+			print_gesture_event_without_coords(ev);
+			break;
+		case LIBINPUT_EVENT_GESTURE_PINCH_BEGIN:
+			print_gesture_event_without_coords(ev);
+			break;
+		case LIBINPUT_EVENT_GESTURE_PINCH_UPDATE:
+			print_gesture_event_with_coords(ev);
+			break;
+		case LIBINPUT_EVENT_GESTURE_PINCH_END:
+			print_gesture_event_without_coords(ev);
 			break;
 		}
 
@@ -392,12 +478,12 @@ main(int argc, char **argv)
 	struct libinput *li;
 	struct timespec tp;
 
-	tools_init_options(&options);
+	tools_init_context(&context);
 
-	if (tools_parse_args(argc, argv, &options))
+	if (tools_parse_args(argc, argv, &context))
 		return 1;
 
-	li = tools_open_backend(&options, NULL, &interface);
+	li = tools_open_backend(&context);
 	if (!li)
 		return 1;
 

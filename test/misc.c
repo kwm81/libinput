@@ -1,23 +1,24 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #include <config.h>
@@ -130,6 +131,7 @@ START_TEST(event_conversion_device_notify)
 			ck_assert(libinput_event_get_pointer_event(event) == NULL);
 			ck_assert(libinput_event_get_keyboard_event(event) == NULL);
 			ck_assert(libinput_event_get_touch_event(event) == NULL);
+			ck_assert(libinput_event_get_gesture_event(event) == NULL);
 			litest_restore_log_handler(li);
 		}
 
@@ -184,6 +186,7 @@ START_TEST(event_conversion_pointer)
 			ck_assert(libinput_event_get_device_notify_event(event) == NULL);
 			ck_assert(libinput_event_get_keyboard_event(event) == NULL);
 			ck_assert(libinput_event_get_touch_event(event) == NULL);
+			ck_assert(libinput_event_get_gesture_event(event) == NULL);
 			litest_restore_log_handler(li);
 		}
 		libinput_event_destroy(event);
@@ -232,6 +235,7 @@ START_TEST(event_conversion_pointer_abs)
 			ck_assert(libinput_event_get_device_notify_event(event) == NULL);
 			ck_assert(libinput_event_get_keyboard_event(event) == NULL);
 			ck_assert(libinput_event_get_touch_event(event) == NULL);
+			ck_assert(libinput_event_get_gesture_event(event) == NULL);
 			litest_restore_log_handler(li);
 		}
 		libinput_event_destroy(event);
@@ -273,6 +277,7 @@ START_TEST(event_conversion_key)
 			ck_assert(libinput_event_get_device_notify_event(event) == NULL);
 			ck_assert(libinput_event_get_pointer_event(event) == NULL);
 			ck_assert(libinput_event_get_touch_event(event) == NULL);
+			ck_assert(libinput_event_get_gesture_event(event) == NULL);
 			litest_restore_log_handler(li);
 		}
 		libinput_event_destroy(event);
@@ -321,12 +326,61 @@ START_TEST(event_conversion_touch)
 			ck_assert(libinput_event_get_device_notify_event(event) == NULL);
 			ck_assert(libinput_event_get_pointer_event(event) == NULL);
 			ck_assert(libinput_event_get_keyboard_event(event) == NULL);
+			ck_assert(libinput_event_get_gesture_event(event) == NULL);
 			litest_restore_log_handler(li);
 		}
 		libinput_event_destroy(event);
 	}
 
 	ck_assert_int_gt(touch, 0);
+}
+END_TEST
+
+START_TEST(event_conversion_gesture)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput *li = dev->libinput;
+	struct libinput_event *event;
+	int gestures = 0;
+	int i;
+
+	libinput_dispatch(li);
+
+	litest_touch_down(dev, 0, 70, 30);
+	litest_touch_down(dev, 1, 30, 70);
+	for (i = 0; i < 8; i++) {
+		litest_push_event_frame(dev);
+		litest_touch_move(dev, 0, 70 - i * 5, 30 + i * 5);
+		litest_touch_move(dev, 1, 30 + i * 5, 70 - i * 5);
+		litest_pop_event_frame(dev);
+		libinput_dispatch(li);
+	}
+
+	while ((event = libinput_get_event(li))) {
+		enum libinput_event_type type;
+		type = libinput_event_get_type(event);
+
+		if (type >= LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN &&
+		    type <= LIBINPUT_EVENT_GESTURE_PINCH_END) {
+			struct libinput_event_gesture *g;
+			struct libinput_event *base;
+			g = libinput_event_get_gesture_event(event);
+			base = libinput_event_gesture_get_base_event(g);
+			ck_assert(event == base);
+
+			gestures++;
+
+			litest_disable_log_handler(li);
+			ck_assert(libinput_event_get_device_notify_event(event) == NULL);
+			ck_assert(libinput_event_get_pointer_event(event) == NULL);
+			ck_assert(libinput_event_get_keyboard_event(event) == NULL);
+			ck_assert(libinput_event_get_touch_event(event) == NULL);
+			litest_restore_log_handler(li);
+		}
+		libinput_event_destroy(event);
+	}
+
+	ck_assert_int_gt(gestures, 0);
 }
 END_TEST
 
@@ -453,7 +507,7 @@ START_TEST(ratelimit_helpers)
 	unsigned int i, j;
 
 	/* 10 attempts every 100ms */
-	ratelimit_init(&rl, 100, 10);
+	ratelimit_init(&rl, ms2us(100), 10);
 
 	for (j = 0; j < 3; ++j) {
 		/* a burst of 9 attempts must succeed */
@@ -583,6 +637,62 @@ START_TEST(trackpoint_accel_parser)
 }
 END_TEST
 
+struct parser_test_dimension {
+	char *tag;
+	bool success;
+	int x, y;
+};
+
+START_TEST(dimension_prop_parser)
+{
+	struct parser_test_dimension tests[] = {
+		{ "10x10", true, 10, 10 },
+		{ "1x20", true, 1, 20 },
+		{ "1x8000", true, 1, 8000 },
+		{ "238492x428210", true, 238492, 428210 },
+		{ "0x0", true, 0, 0 },
+		{ "-10x10", false, 0, 0 },
+		{ "-1", false, 0, 0 },
+		{ "1x-99", false, 0, 0 },
+		{ "0", false, 0, 0 },
+		{ "100", false, 0, 0 },
+		{ "", false, 0, 0 },
+		{ "abd", false, 0, 0 },
+		{ "xabd", false, 0, 0 },
+		{ "0xaf", false, 0, 0 },
+		{ "0x0x", true, 0, 0 },
+		{ "x10", false, 0, 0 },
+		{ NULL, false, 0, 0 }
+	};
+	int i;
+	size_t x, y;
+	bool success;
+
+	for (i = 0; tests[i].tag != NULL; i++) {
+		x = y = 0xad;
+		success = parse_dimension_property(tests[i].tag, &x, &y);
+		ck_assert(success == tests[i].success);
+		if (success) {
+			ck_assert_int_eq(x, tests[i].x);
+			ck_assert_int_eq(y, tests[i].y);
+		} else {
+			ck_assert_int_eq(x, 0xad);
+			ck_assert_int_eq(y, 0xad);
+		}
+	}
+}
+END_TEST
+
+START_TEST(time_conversion)
+{
+	ck_assert_int_eq(us(10), 10);
+	ck_assert_int_eq(ns2us(10000), 10);
+	ck_assert_int_eq(ms2us(10), 10000);
+	ck_assert_int_eq(s2us(1), 1000000);
+	ck_assert_int_eq(us2ms(10000), 10);
+}
+END_TEST
+
 void
 litest_setup_tests(void)
 {
@@ -592,13 +702,16 @@ litest_setup_tests(void)
 	litest_add_for_device("events:conversion", event_conversion_pointer_abs, LITEST_XEN_VIRTUAL_POINTER);
 	litest_add_for_device("events:conversion", event_conversion_key, LITEST_KEYBOARD);
 	litest_add_for_device("events:conversion", event_conversion_touch, LITEST_WACOM_TOUCH);
+	litest_add_for_device("events:conversion", event_conversion_gesture, LITEST_BCM5974);
 
 	litest_add_no_device("context:refcount", context_ref_counting);
 	litest_add_no_device("config:status string", config_status_string);
 
 	litest_add_no_device("misc:matrix", matrix_helpers);
 	litest_add_no_device("misc:ratelimit", ratelimit_helpers);
-	litest_add_no_device("misc:dpi parser", dpi_parser);
-	litest_add_no_device("misc:wheel click parser", wheel_click_parser);
-	litest_add_no_device("misc:trackpoint accel parser", trackpoint_accel_parser);
+	litest_add_no_device("misc:parser", dpi_parser);
+	litest_add_no_device("misc:parser", wheel_click_parser);
+	litest_add_no_device("misc:parser", trackpoint_accel_parser);
+	litest_add_no_device("misc:parser", dimension_prop_parser);
+	litest_add_no_device("misc:time", time_conversion);
 }

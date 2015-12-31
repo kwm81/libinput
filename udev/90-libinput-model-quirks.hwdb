@@ -11,9 +11,35 @@
 # Match string formats:
 #	libinput:<modalias>
 #	libinput:name:<name>:dmi:<dmi string>
-
+#	libinput:name:<name>:fwversion:<version>
 #
 # Sort by brand, model
+
+##########################################
+# ALPS
+##########################################
+libinput:name:*AlpsPS/2 ALPS DualPoint TouchPad:dmi:*
+libinput:name:*AlpsPS/2 ALPS GlidePoint:dmi:*
+ LIBINPUT_MODEL_ALPS_TOUCHPAD=1
+
+libinput:name:*AlpsPS/2 ALPS DualPoint TouchPad:fwversion:8
+libinput:name:*AlpsPS/2 ALPS GlidePoint:fwversion:8
+ LIBINPUT_ATTR_SIZE_HINT=100x55
+
+##########################################
+# Apple
+##########################################
+libinput:touchpad:input:b0003v05ACp*
+libinput:touchpad:input:b0005v05ACp*
+ LIBINPUT_MODEL_APPLE_TOUCHPAD=1
+ LIBINPUT_ATTR_SIZE_HINT=104x75
+
+##########################################
+# Elantech
+##########################################
+libinput:name:*ETPS/2 Elantech Touchpad*:dmi:*
+ LIBINPUT_ATTR_RESOLUTION_HINT=31x31
+ LIBINPUT_MODEL_ELANTECH_TOUCHPAD=1
 
 ##########################################
 # Google
@@ -23,18 +49,18 @@
 # extrapolated from the chromiumos touchad-tests repo
 # https://chromium.googlesource.com/chromiumos/platform/touchpad-tests
 libinput:name:Cypress APA Trackpad (cyapa):dmi:*pnFalco:pvr*
-libinput:name:SynPS/2 Synaptics TouchPad:dmi:*pn*Mario*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*pn*Butterfly*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*pn*Peppy*:
-libinput:name:SynPS/2 Synaptics TouchPad:dmi:*pn*ZGB*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*pn*Parrot*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*bvn*coreboot*:pn*Leon*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*bvn*coreboot*:pn*Falco*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*bvn*coreboot*:pn*Wolf*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*svn*GOOGLE*:pn*Link*:
-libinput:name:SynPS/2 Synaptics TouchPad:dmi:*pn*Alex*:
-libinput:name:Cypress APA Trackpad (cyapa):dmi:*svn*SAMSUNG*:pn*Lumpy*:
-libinput:name:Atmel maXTouch Touchpad:dmi:*svn*GOOGLE*:pn*Samus*:
+libinput:name:SynPS/2 Synaptics TouchPad:dmi:*pn*Mario*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*pn*Butterfly*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*pn*Peppy*
+libinput:name:SynPS/2 Synaptics TouchPad:dmi:*pn*ZGB*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*pn*Parrot*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*bvn*coreboot*:pn*Leon*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*bvn*coreboot*:pn*Falco*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*bvn*coreboot*:pn*Wolf*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*svn*GOOGLE*:pn*Link*
+libinput:name:SynPS/2 Synaptics TouchPad:dmi:*pn*Alex*
+libinput:name:Cypress APA Trackpad (cyapa):dmi:*svn*SAMSUNG*:pn*Lumpy*
+libinput:name:Atmel maXTouch Touchpad:dmi:*svn*GOOGLE*:pn*Samus*
  LIBINPUT_MODEL_CHROMEBOOK=1
 
 ##########################################
@@ -44,6 +70,12 @@ libinput:name:Atmel maXTouch Touchpad:dmi:*svn*GOOGLE*:pn*Samus*:
 # X230 (Tablet)
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnLENOVO:*:pvrThinkPadX230*
  LIBINPUT_MODEL_LENOVO_X230=1
+
+##########################################
+# Synaptics
+##########################################
+libinput:touchpad:input:b0011v0002p0007*
+ LIBINPUT_MODEL_SYNAPTICS_SERIAL_TOUCHPAD=1
 
 ##########################################
 # System76
@@ -64,3 +96,9 @@ libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnSystem76*pvrgalu1*
 # Kudu Professional
 libinput:name:SynPS/2 Synaptics TouchPad:dmi:*svnSystem76*pvrkudp1*
  LIBINPUT_MODEL_SYSTEM76_KUDU=1
+
+##########################################
+# Wacom
+##########################################
+libinput:touchpad:input:b0003v056Ap*
+ LIBINPUT_MODEL_WACOM_TOUCHPAD=1

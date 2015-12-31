@@ -1,24 +1,27 @@
 /*
- * Copyright © 2014 Red Hat, Inc.
+ * Copyright © 2014-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
+
+#include "config.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -49,7 +52,6 @@ libinput_timer_init(struct libinput_timer *timer, struct libinput *libinput,
 static void
 libinput_timer_arm_timer_fd(struct libinput *libinput)
 {
-	int r;
 	struct libinput_timer *timer;
 	uint64_t earliest_expire = UINT64_MAX;
 
@@ -59,10 +61,11 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 	}
 
 #ifdef __linux__
+	int r;
 	struct itimerspec its = { { 0, 0 }, { 0, 0 } };
 	if (earliest_expire != UINT64_MAX) {
-		its.it_value.tv_sec = earliest_expire / 1000;
-		its.it_value.tv_nsec = (earliest_expire % 1000) * 1000 * 1000;
+		its.it_value.tv_sec = earliest_expire / ms2us(1000);
+		its.it_value.tv_nsec = (earliest_expire % ms2us(1000)) * 1000;
 	}
 
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
@@ -71,13 +74,14 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 	uint64_t now = libinput_now(timer->libinput);
 	struct kevent chlist[3];
 	int nchanges = 0;
-	EV_SET(&chlist[nchanges++], (uintptr_t) libinput, EVFILT_TIMER, EV_ADD, 0, 0, 0);
-	EV_SET(&chlist[nchanges++], (uintptr_t) libinput, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
+	EV_SET(&chlist[nchanges++], 0, EVFILT_TIMER, EV_ADD, 0, 0, 0);
+	EV_SET(&chlist[nchanges++], 0, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
 	if (earliest_expire != UINT64_MAX) {
-		EV_SET(&chlist[nchanges++], (uintptr_t) libinput, EVFILT_TIMER,
-		       EV_ADD | EV_ONESHOT, 0,
-		       earliest_expire >= now ? earliest_expire - now : 0,
-		       libinput->timer.source);
+		EV_SET(
+		  &chlist[nchanges++], 0, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0,
+		  earliest_expire > now ? (earliest_expire - now) / 1000 + 1
+					: 0,
+		  libinput->timer.source);
 	}
 
 	if (kevent(libinput->epoll_fd, chlist, nchanges, NULL, 0, NULL) == -1) {
@@ -91,7 +95,10 @@ libinput_timer_set(struct libinput_timer *timer, uint64_t expire)
 {
 #ifndef NDEBUG
 	uint64_t now = libinput_now(timer->libinput);
-	if (abs(expire - now) > 5000)
+	if (expire < now)
+		log_bug_libinput(timer->libinput,
+				 "timer offset negative\n");
+	else if ((expire - now) > ms2us(5000))
 		log_bug_libinput(timer->libinput,
 				 "timer offset more than 5s, now %"
 				 PRIu64 " expire %" PRIu64 "\n",
@@ -128,14 +135,14 @@ libinput_timer_handler(void *data)
 	uint64_t discard;
 	int r;
 
+#ifdef __linux__
 	r = read(libinput->timer.fd, &discard, sizeof(discard));
 	if (r == -1 && errno != EAGAIN)
 		log_bug_libinput(libinput,
 				 "Error %d reading from timerfd (%s)",
 				 errno,
 				 strerror(errno));
-
-	fprintf(stderr, "handling timer\n");
+#endif
 
 	now = libinput_now(libinput);
 	if (now == 0)

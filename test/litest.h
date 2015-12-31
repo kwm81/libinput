@@ -1,23 +1,24 @@
 /*
  * Copyright © 2013 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and its
- * documentation for any purpose is hereby granted without fee, provided that
- * the above copyright notice appear in all copies and that both that copyright
- * notice and this permission notice appear in supporting documentation, and
- * that the name of the copyright holders not be used in advertising or
- * publicity pertaining to distribution of the software without specific,
- * written prior permission.  The copyright holders make no representations
- * about the suitability of this software for any purpose.  It is provided "as
- * is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
- * INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
- * EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
- * CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
- * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
- * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
- * OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #if HAVE_CONFIG_H
@@ -135,6 +136,12 @@ enum litest_device_type {
 	LITEST_MOUSE_ROCCAT = -22,
 	LITEST_LOGITECH_TRACKBALL = -23,
 	LITEST_ATMEL_HOVER = -24,
+	LITEST_ALPS_DUALPOINT = -25,
+	LITEST_MOUSE_LOW_DPI = -26,
+	LITEST_GENERIC_MULTITOUCH_SCREEN = -27,
+	LITEST_NEXUS4_TOUCH_SCREEN = -28,
+	LITEST_MAGIC_TRACKPAD = -29,
+	LITEST_ELANTECH_TOUCHPAD = -30,
 };
 
 enum litest_device_feature {
@@ -156,6 +163,7 @@ enum litest_device_feature {
 	LITEST_ABSOLUTE = 1 << 13,
 	LITEST_PROTOCOL_A = 1 << 14,
 	LITEST_HOVER = 1 << 15,
+	LITEST_ELLIPSE = 1 << 16,
 };
 
 struct litest_device {
@@ -172,6 +180,11 @@ struct litest_device {
 	void *private; /* device-specific data */
 
 	char *udev_rule_file;
+};
+
+struct axis_replacement {
+	int32_t evcode;
+	int32_t value;
 };
 
 /* A loop range, resolves to:
@@ -282,16 +295,27 @@ void litest_event(struct litest_device *t,
 int litest_auto_assign_value(struct litest_device *d,
 			     const struct input_event *ev,
 			     int slot, double x, double y,
+			     struct axis_replacement *axes,
 			     bool touching);
 void litest_touch_up(struct litest_device *d, unsigned int slot);
 void litest_touch_move(struct litest_device *d,
 		       unsigned int slot,
 		       double x,
 		       double y);
+void litest_touch_move_extended(struct litest_device *d,
+				unsigned int slot,
+				double x,
+				double y,
+				struct axis_replacement *axes);
 void litest_touch_down(struct litest_device *d,
 		       unsigned int slot,
 		       double x,
 		       double y);
+void litest_touch_down_extended(struct litest_device *d,
+				unsigned int slot,
+				double x,
+				double y,
+				struct axis_replacement *axes);
 void litest_touch_move_to(struct litest_device *d,
 			  unsigned int slot,
 			  double x_from, double y_from,
@@ -302,6 +326,12 @@ void litest_touch_move_two_touches(struct litest_device *d,
 				   double x1, double y1,
 				   double dx, double dy,
 				   int steps, int sleep_ms);
+void litest_touch_move_three_touches(struct litest_device *d,
+				     double x0, double y0,
+				     double x1, double y1,
+				     double x2, double y2,
+				     double dx, double dy,
+				     int steps, int sleep_ms);
 void litest_hover_start(struct litest_device *d,
 			unsigned int slot,
 			double x,
@@ -351,6 +381,11 @@ struct libinput_event_keyboard * litest_is_keyboard_event(
 		       struct libinput_event *event,
 		       unsigned int key,
 		       enum libinput_key_state state);
+struct libinput_event_gesture * litest_is_gesture_event(
+		       struct libinput_event *event,
+		       enum libinput_event_type type,
+		       int nfingers);
+
 void litest_assert_button_event(struct libinput *li,
 				unsigned int button,
 				enum libinput_button_state state);
@@ -375,6 +410,9 @@ void litest_timeout_buttonscroll(void);
 void litest_timeout_edgescroll(void);
 void litest_timeout_finger_switch(void);
 void litest_timeout_middlebutton(void);
+void litest_timeout_dwt_short(void);
+void litest_timeout_dwt_long(void);
+void litest_timeout_gesture(void);
 
 void litest_push_event_frame(struct litest_device *dev);
 void litest_pop_event_frame(struct litest_device *dev);
@@ -410,4 +448,171 @@ void litest_semi_mt_touch_up(struct litest_device *d,
 #define ck_assert_notnull(ptr) ck_assert_ptr_ne(ptr, NULL)
 #endif
 
+static inline void
+litest_enable_tap(struct libinput_device *device)
+{
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_tap_set_enabled(device,
+							LIBINPUT_CONFIG_TAP_ENABLED);
+
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_disable_tap(struct libinput_device *device)
+{
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_tap_set_enabled(device,
+							LIBINPUT_CONFIG_TAP_DISABLED);
+
+	litest_assert_int_eq(status, expected);
+}
+
+static inline bool
+litest_has_2fg_scroll(struct litest_device *dev)
+{
+	struct libinput_device *device = dev->libinput_device;
+
+	return !!(libinput_device_config_scroll_get_methods(device) &
+		  LIBINPUT_CONFIG_SCROLL_2FG);
+}
+
+static inline void
+litest_enable_2fg_scroll(struct litest_device *dev)
+{
+	enum libinput_config_status status, expected;
+	struct libinput_device *device = dev->libinput_device;
+
+	status = libinput_device_config_scroll_set_method(device,
+					  LIBINPUT_CONFIG_SCROLL_2FG);
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_enable_edge_scroll(struct litest_device *dev)
+{
+	enum libinput_config_status status, expected;
+	struct libinput_device *device = dev->libinput_device;
+
+	status = libinput_device_config_scroll_set_method(device,
+					  LIBINPUT_CONFIG_SCROLL_EDGE);
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_enable_clickfinger(struct litest_device *dev)
+{
+	enum libinput_config_status status, expected;
+	struct libinput_device *device = dev->libinput_device;
+
+	status = libinput_device_config_click_set_method(device,
+				 LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER);
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_enable_buttonareas(struct litest_device *dev)
+{
+	enum libinput_config_status status, expected;
+	struct libinput_device *device = dev->libinput_device;
+
+	status = libinput_device_config_click_set_method(device,
+				 LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS);
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	litest_assert_int_eq(status, expected);
+}
+
+static inline int
+litest_is_synaptics_semi_mt(struct litest_device *dev)
+{
+	struct libevdev *evdev = dev->evdev;
+
+	return libevdev_has_property(evdev, INPUT_PROP_SEMI_MT) &&
+		libevdev_get_id_vendor(evdev) == 0x2 &&
+		libevdev_get_id_product(evdev) == 0x7;
+}
+
+static inline void
+litest_enable_drag_lock(struct libinput_device *device)
+{
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_tap_set_drag_lock_enabled(device,
+								  LIBINPUT_CONFIG_DRAG_LOCK_ENABLED);
+
+	litest_assert_int_eq(status, expected);
+}
+
+static inline void
+litest_disable_drag_lock(struct libinput_device *device)
+{
+	enum libinput_config_status status, expected;
+
+	expected = LIBINPUT_CONFIG_STATUS_SUCCESS;
+	status = libinput_device_config_tap_set_drag_lock_enabled(device,
+								  LIBINPUT_CONFIG_DRAG_LOCK_DISABLED);
+
+	litest_assert_int_eq(status, expected);
+}
+
+#define CK_DOUBLE_EQ_EPSILON 1E-3
+#define ck_assert_double_eq(X,Y)  \
+	do { \
+		double _ck_x = X; \
+		double _ck_y = Y; \
+		ck_assert_msg(fabs(_ck_x - _ck_y) < CK_DOUBLE_EQ_EPSILON, \
+			      "Assertion '" #X " == " #Y \
+			      "' failed: "#X"==%f, "#Y"==%f", \
+			      _ck_x, \
+			      _ck_y); \
+	} while (0)
+
+#define ck_assert_double_ne(X,Y)  \
+	do { \
+		double _ck_x = X; \
+		double _ck_y = Y; \
+		ck_assert_msg(fabs(_ck_x - _ck_y) > CK_DOUBLE_EQ_EPSILON, \
+			      "Assertion '" #X " != " #Y \
+			      "' failed: "#X"==%f, "#Y"==%f", \
+			      _ck_x, \
+			      _ck_y); \
+	} while (0)
+
+#define _ck_assert_double_eq(X, OP, Y)  \
+	do { \
+		double _ck_x = X; \
+		double _ck_y = Y; \
+		ck_assert_msg(_ck_x OP _ck_y || \
+			      fabs(_ck_x - _ck_y) < CK_DOUBLE_EQ_EPSILON, \
+			      "Assertion '" #X#OP#Y \
+			      "' failed: "#X"==%f, "#Y"==%f", \
+			      _ck_x, \
+			      _ck_y); \
+	} while (0)
+
+#define _ck_assert_double_ne(X, OP,Y) \
+	do { \
+		double _ck_x = X; \
+		double _ck_y = Y; \
+		ck_assert_msg(_ck_x OP _ck_y && \
+			      fabs(_ck_x - _ck_y) > CK_DOUBLE_EQ_EPSILON, \
+			      "Assertion '" #X#OP#Y \
+			      "' failed: "#X"==%f, "#Y"==%f", \
+			      _ck_x, \
+			      _ck_y); \
+	} while (0)
+#define ck_assert_double_lt(X, Y) _ck_assert_double_ne(X, <, Y)
+#define ck_assert_double_le(X, Y) _ck_assert_double_eq(X, <=, Y)
+#define ck_assert_double_gt(X, Y) _ck_assert_double_ne(X, >, Y)
+#define ck_assert_double_ge(X, Y) _ck_assert_double_eq(X, >=, Y)
 #endif /* LITEST_H */

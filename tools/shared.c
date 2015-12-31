@@ -1,29 +1,31 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #define _GNU_SOURCE
 #include <config.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,20 +44,26 @@
 enum options {
 	OPT_DEVICE,
 	OPT_UDEV,
+	OPT_GRAB,
 	OPT_HELP,
 	OPT_VERBOSE,
 	OPT_TAP_ENABLE,
 	OPT_TAP_DISABLE,
+	OPT_DRAG_LOCK_ENABLE,
+	OPT_DRAG_LOCK_DISABLE,
 	OPT_NATURAL_SCROLL_ENABLE,
 	OPT_NATURAL_SCROLL_DISABLE,
 	OPT_LEFT_HANDED_ENABLE,
 	OPT_LEFT_HANDED_DISABLE,
 	OPT_MIDDLEBUTTON_ENABLE,
 	OPT_MIDDLEBUTTON_DISABLE,
+	OPT_DWT_ENABLE,
+	OPT_DWT_DISABLE,
 	OPT_CLICK_METHOD,
 	OPT_SCROLL_METHOD,
 	OPT_SCROLL_BUTTON,
 	OPT_SPEED,
+	OPT_PROFILE,
 };
 
 static void
@@ -67,8 +75,12 @@ log_handler(struct libinput *li,
 	vprintf(format, args);
 }
 
+#ifndef __linux__
+const char *program_invocation_short_name;
+#endif
+
 void
-tools_usage(const char *argv0)
+tools_usage()
 {
 	printf("Usage: %s [options] [--udev [<seat>]|--device /dev/input/event0]\n"
 	       "--udev <seat>.... Use udev device discovery (default).\n"
@@ -78,64 +90,85 @@ tools_usage(const char *argv0)
 	       "Features:\n"
 	       "--enable-tap\n"
 	       "--disable-tap.... enable/disable tapping\n"
+	       "--enable-drag-lock\n"
+	       "--disable-drag-lock.... enable/disable tapping drag lock\n"
 	       "--enable-natural-scrolling\n"
 	       "--disable-natural-scrolling.... enable/disable natural scrolling\n"
 	       "--enable-left-handed\n"
 	       "--disable-left-handed.... enable/disable left-handed button configuration\n"
 	       "--enable-middlebutton\n"
 	       "--disable-middlebutton.... enable/disable middle button emulation\n"
+	       "--enable-dwt\n"
+	       "--disable-dwt..... enable/disable disable-while-typing\n"
 	       "--set-click-method=[none|clickfinger|buttonareas] .... set the desired click method\n"
 	       "--set-scroll-method=[none|twofinger|edge|button] ... set the desired scroll method\n"
 	       "--set-scroll-button=BTN_MIDDLE ... set the button to the given button code\n"
+	       "--set-profile=[adaptive|flat].... set pointer acceleration profile\n"
 	       "--set-speed=<value>.... set pointer acceleration speed\n"
 	       "\n"
 	       "These options apply to all applicable devices, if a feature\n"
 	       "is not explicitly specified it is left at each device's default.\n"
 	       "\n"
 	       "Other options:\n"
+	       "--grab .......... Exclusively grab all openend devices\n"
 	       "--verbose ....... Print debugging output.\n"
 	       "--help .......... Print this help.\n",
-		argv0);
+		program_invocation_short_name);
 }
 
 void
-tools_init_options(struct tools_options *options)
+tools_init_context(struct tools_context *context)
 {
+	struct tools_options *options = &context->options;
+
+	context->user_data = NULL;
+
 	memset(options, 0, sizeof(*options));
 	options->tapping = -1;
+	options->drag_lock = -1;
 	options->natural_scroll = -1;
 	options->left_handed = -1;
 	options->middlebutton = -1;
+	options->dwt = -1;
 	options->click_method = -1;
 	options->scroll_method = -1;
 	options->scroll_button = -1;
 	options->backend = BACKEND_UDEV;
 	options->seat = "seat0";
 	options->speed = 0.0;
+	options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_NONE;
 }
 
 int
-tools_parse_args(int argc, char **argv, struct tools_options *options)
+tools_parse_args(int argc, char **argv, struct tools_context *context)
 {
+	struct tools_options *options = &context->options;
+
 	while (1) {
 		int c;
 		int option_index = 0;
 		static struct option opts[] = {
 			{ "device", 1, 0, OPT_DEVICE },
 			{ "udev", 0, 0, OPT_UDEV },
+			{ "grab", 0, 0, OPT_GRAB },
 			{ "help", 0, 0, OPT_HELP },
 			{ "verbose", 0, 0, OPT_VERBOSE },
 			{ "enable-tap", 0, 0, OPT_TAP_ENABLE },
 			{ "disable-tap", 0, 0, OPT_TAP_DISABLE },
+			{ "enable-drag-lock", 0, 0, OPT_DRAG_LOCK_ENABLE },
+			{ "disable-drag-lock", 0, 0, OPT_DRAG_LOCK_DISABLE },
 			{ "enable-natural-scrolling", 0, 0, OPT_NATURAL_SCROLL_ENABLE },
 			{ "disable-natural-scrolling", 0, 0, OPT_NATURAL_SCROLL_DISABLE },
 			{ "enable-left-handed", 0, 0, OPT_LEFT_HANDED_ENABLE },
 			{ "disable-left-handed", 0, 0, OPT_LEFT_HANDED_DISABLE },
 			{ "enable-middlebutton", 0, 0, OPT_MIDDLEBUTTON_ENABLE },
 			{ "disable-middlebutton", 0, 0, OPT_MIDDLEBUTTON_DISABLE },
+			{ "enable-dwt", 0, 0, OPT_DWT_ENABLE },
+			{ "disable-dwt", 0, 0, OPT_DWT_DISABLE },
 			{ "set-click-method", 1, 0, OPT_CLICK_METHOD },
 			{ "set-scroll-method", 1, 0, OPT_SCROLL_METHOD },
 			{ "set-scroll-button", 1, 0, OPT_SCROLL_BUTTON },
+			{ "set-profile", 1, 0, OPT_PROFILE },
 			{ "speed", 1, 0, OPT_SPEED },
 			{ 0, 0, 0, 0}
 		};
@@ -144,123 +177,156 @@ tools_parse_args(int argc, char **argv, struct tools_options *options)
 		if (c == -1)
 			break;
 
+#ifndef __linux__
+		program_invocation_short_name = argv[0];
+#endif
+
 		switch(c) {
-			case 'h': /* --help */
-			case OPT_HELP:
-				tools_usage(argv[0]);
-				exit(0);
-			case OPT_DEVICE: /* --device */
-				options->backend = BACKEND_DEVICE;
-				if (!optarg) {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				options->device = optarg;
-				break;
-			case OPT_UDEV: /* --udev */
-				options->backend = BACKEND_UDEV;
-				if (optarg)
-					options->seat = optarg;
-				break;
-			case OPT_VERBOSE: /* --verbose */
-				options->verbose = 1;
-				break;
-			case OPT_TAP_ENABLE:
-				options->tapping = 1;
-				break;
-			case OPT_TAP_DISABLE:
-				options->tapping = 0;
-				break;
-			case OPT_NATURAL_SCROLL_ENABLE:
-				options->natural_scroll = 1;
-				break;
-			case OPT_NATURAL_SCROLL_DISABLE:
-				options->natural_scroll = 0;
-				break;
-			case OPT_LEFT_HANDED_ENABLE:
-				options->left_handed = 1;
-				break;
-			case OPT_LEFT_HANDED_DISABLE:
-				options->left_handed = 0;
-				break;
-			case OPT_MIDDLEBUTTON_ENABLE:
-				options->middlebutton = 1;
-				break;
-			case OPT_MIDDLEBUTTON_DISABLE:
-				options->middlebutton = 0;
-				break;
-			case OPT_CLICK_METHOD:
-				if (!optarg) {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				if (streq(optarg, "none")) {
-					options->click_method =
-						LIBINPUT_CONFIG_CLICK_METHOD_NONE;
-				} else if (streq(optarg, "clickfinger")) {
-					options->click_method =
-						LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
-				} else if (streq(optarg, "buttonareas")) {
-					options->click_method =
-						LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
-				} else {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				break;
-			case OPT_SCROLL_METHOD:
-				if (!optarg) {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				if (streq(optarg, "none")) {
-					options->scroll_method =
-						LIBINPUT_CONFIG_SCROLL_NO_SCROLL;
-				} else if (streq(optarg, "twofinger")) {
-					options->scroll_method =
-						LIBINPUT_CONFIG_SCROLL_2FG;
-				} else if (streq(optarg, "edge")) {
-					options->scroll_method =
-						LIBINPUT_CONFIG_SCROLL_EDGE;
-				} else if (streq(optarg, "button")) {
-					options->scroll_method =
-						LIBINPUT_CONFIG_SCROLL_ON_BUTTON_DOWN;
-				} else {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				break;
-			case OPT_SCROLL_BUTTON:
-				if (!optarg) {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				options->scroll_button =
-					libevdev_event_code_from_name(EV_KEY,
-								      optarg);
-				if (options->scroll_button == -1) {
-					fprintf(stderr,
-						"Invalid button %s\n",
-						optarg);
-					return 1;
-				}
-				break;
-			case OPT_SPEED:
-				if (!optarg) {
-					tools_usage(argv[0]);
-					return 1;
-				}
-				options->speed = atof(optarg);
-				break;
-			default:
-				tools_usage(argv[0]);
+		case 'h':
+		case OPT_HELP:
+			tools_usage();
+			exit(0);
+		case OPT_DEVICE:
+			options->backend = BACKEND_DEVICE;
+			if (!optarg) {
+				tools_usage();
 				return 1;
+			}
+			options->device = optarg;
+			break;
+		case OPT_UDEV:
+			options->backend = BACKEND_UDEV;
+			if (optarg)
+				options->seat = optarg;
+			break;
+		case OPT_GRAB:
+			options->grab = 1;
+			break;
+		case OPT_VERBOSE:
+			options->verbose = 1;
+			break;
+		case OPT_TAP_ENABLE:
+			options->tapping = 1;
+			break;
+		case OPT_TAP_DISABLE:
+			options->tapping = 0;
+			break;
+		case OPT_DRAG_LOCK_ENABLE:
+			options->drag_lock = 1;
+			break;
+		case OPT_DRAG_LOCK_DISABLE:
+			options->drag_lock = 0;
+			break;
+		case OPT_NATURAL_SCROLL_ENABLE:
+			options->natural_scroll = 1;
+			break;
+		case OPT_NATURAL_SCROLL_DISABLE:
+			options->natural_scroll = 0;
+			break;
+		case OPT_LEFT_HANDED_ENABLE:
+			options->left_handed = 1;
+			break;
+		case OPT_LEFT_HANDED_DISABLE:
+			options->left_handed = 0;
+			break;
+		case OPT_MIDDLEBUTTON_ENABLE:
+			options->middlebutton = 1;
+			break;
+		case OPT_MIDDLEBUTTON_DISABLE:
+			options->middlebutton = 0;
+			break;
+		case OPT_DWT_ENABLE:
+			options->dwt = LIBINPUT_CONFIG_DWT_ENABLED;
+			break;
+		case OPT_DWT_DISABLE:
+			options->dwt = LIBINPUT_CONFIG_DWT_DISABLED;
+			break;
+		case OPT_CLICK_METHOD:
+			if (!optarg) {
+				tools_usage();
+				return 1;
+			}
+			if (streq(optarg, "none")) {
+				options->click_method =
+				LIBINPUT_CONFIG_CLICK_METHOD_NONE;
+			} else if (streq(optarg, "clickfinger")) {
+				options->click_method =
+				LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
+			} else if (streq(optarg, "buttonareas")) {
+				options->click_method =
+				LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
+			} else {
+				tools_usage();
+				return 1;
+			}
+			break;
+		case OPT_SCROLL_METHOD:
+			if (!optarg) {
+				tools_usage();
+				return 1;
+			}
+			if (streq(optarg, "none")) {
+				options->scroll_method =
+				LIBINPUT_CONFIG_SCROLL_NO_SCROLL;
+			} else if (streq(optarg, "twofinger")) {
+				options->scroll_method =
+				LIBINPUT_CONFIG_SCROLL_2FG;
+			} else if (streq(optarg, "edge")) {
+				options->scroll_method =
+				LIBINPUT_CONFIG_SCROLL_EDGE;
+			} else if (streq(optarg, "button")) {
+				options->scroll_method =
+				LIBINPUT_CONFIG_SCROLL_ON_BUTTON_DOWN;
+			} else {
+				tools_usage();
+				return 1;
+			}
+			break;
+		case OPT_SCROLL_BUTTON:
+			if (!optarg) {
+				tools_usage();
+				return 1;
+			}
+			options->scroll_button =
+			libevdev_event_code_from_name(EV_KEY,
+						      optarg);
+			if (options->scroll_button == -1) {
+				fprintf(stderr,
+					"Invalid button %s\n",
+					optarg);
+				return 1;
+			}
+			break;
+		case OPT_SPEED:
+			if (!optarg) {
+				tools_usage();
+				return 1;
+			}
+			options->speed = atof(optarg);
+			break;
+		case OPT_PROFILE:
+			if (!optarg) {
+				tools_usage();
+				return 1;
+			}
+			if (streq(optarg, "adaptive")) {
+				options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE;
+			} else if (streq(optarg, "flat")) {
+				options->profile = LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
+			} else {
+				tools_usage();
+				return 1;
+			}
+			break;
+		default:
+			tools_usage();
+			return 1;
 		}
 
 	}
 
 	if (optind < argc) {
-		tools_usage(argv[0]);
+		tools_usage();
 		return 1;
 	}
 
@@ -334,17 +400,44 @@ open_device(const struct libinput_interface *interface,
 	return li;
 }
 
+static int
+open_restricted(const char *path, int flags, void *user_data)
+{
+	const struct tools_context *context = user_data;
+	int fd = open(path, flags);
+
+	if (fd < 0)
+		fprintf(stderr, "Failed to open %s (%s)\n",
+			path, strerror(errno));
+	else if (context->options.grab &&
+		 ioctl(fd, EVIOCGRAB, (void*)1) == -1)
+		fprintf(stderr, "Grab requested, but failed for %s (%s)\n",
+			path, strerror(errno));
+
+	return fd < 0 ? -errno : fd;
+}
+
+static void
+close_restricted(int fd, void *user_data)
+{
+	close(fd);
+}
+
+static const struct libinput_interface interface = {
+	.open_restricted = open_restricted,
+	.close_restricted = close_restricted,
+};
+
 struct libinput *
-tools_open_backend(struct tools_options *options,
-		   void *userdata,
-		   const struct libinput_interface *interface)
+tools_open_backend(struct tools_context *context)
 {
 	struct libinput *li = NULL;
+	struct tools_options *options = &context->options;
 
 	if (options->backend == BACKEND_UDEV) {
-		li = open_udev(interface, userdata, options->seat, options->verbose);
+		li = open_udev(&interface, context, options->seat, options->verbose);
 	} else if (options->backend == BACKEND_DEVICE) {
-		li = open_device(interface, userdata, options->device, options->verbose);
+		li = open_device(&interface, context, options->device, options->verbose);
 	} else
 		abort();
 
@@ -357,6 +450,9 @@ tools_device_apply_config(struct libinput_device *device,
 {
 	if (options->tapping != -1)
 		libinput_device_config_tap_set_enabled(device, options->tapping);
+	if (options->drag_lock != -1)
+		libinput_device_config_tap_set_drag_lock_enabled(device,
+								 options->drag_lock);
 	if (options->natural_scroll != -1)
 		libinput_device_config_scroll_set_natural_scroll_enabled(device,
 									 options->natural_scroll);
@@ -365,6 +461,9 @@ tools_device_apply_config(struct libinput_device *device,
 	if (options->middlebutton != -1)
 		libinput_device_config_middle_emulation_set_enabled(device,
 								    options->middlebutton);
+
+	if (options->dwt != -1)
+		libinput_device_config_dwt_set_enabled(device, options->dwt);
 
 	if (options->click_method != -1)
 		libinput_device_config_click_set_method(device, options->click_method);
@@ -376,7 +475,11 @@ tools_device_apply_config(struct libinput_device *device,
 		libinput_device_config_scroll_set_button(device,
 							 options->scroll_button);
 
-	if (libinput_device_config_accel_is_available(device))
+	if (libinput_device_config_accel_is_available(device)) {
 		libinput_device_config_accel_set_speed(device,
 						       options->speed);
+		if (options->profile != LIBINPUT_CONFIG_ACCEL_PROFILE_NONE)
+			libinput_device_config_accel_set_profile(device,
+								 options->profile);
+	}
 }

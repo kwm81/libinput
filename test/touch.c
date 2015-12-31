@@ -1,23 +1,24 @@
 /*
  * Copyright © 2013 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #include <config.h>
@@ -586,7 +587,8 @@ START_TEST(touch_initial_state)
 {
 	struct litest_device *dev;
 	struct libinput *libinput1, *libinput2;
-	struct libinput_event *ev1, *ev2;
+	struct libinput_event *ev1 = NULL;
+	struct libinput_event *ev2 = NULL;
 	struct libinput_event_touch *t1, *t2;
 	struct libinput_device *device1, *device2;
 	int axis = _i; /* looped test */
@@ -650,6 +652,27 @@ START_TEST(touch_initial_state)
 }
 END_TEST
 
+START_TEST(touch_time_usec)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput *li = dev->libinput;
+	struct libinput_event *event;
+	struct libinput_event_touch *tev;
+
+	litest_drain_events(dev->libinput);
+
+	litest_touch_down(dev, 0, 10, 10);
+
+	litest_wait_for_event(li);
+
+	event = libinput_get_event(li);
+	tev = litest_is_touch_event(event, LIBINPUT_EVENT_TOUCH_DOWN);
+	ck_assert_int_eq(libinput_event_touch_get_time(tev),
+			 libinput_event_touch_get_time_usec(tev) / 1000);
+	libinput_event_destroy(event);
+}
+END_TEST
+
 void
 litest_setup_tests(void)
 {
@@ -676,4 +699,6 @@ litest_setup_tests(void)
 	litest_add("touch:protocol a", touch_protocol_a_2fg_touch, LITEST_PROTOCOL_A, LITEST_ANY);
 
 	litest_add_ranged("touch:state", touch_initial_state, LITEST_TOUCH, LITEST_PROTOCOL_A, &axes);
+
+	litest_add("touch:time", touch_time_usec, LITEST_TOUCH, LITEST_TOUCHPAD);
 }

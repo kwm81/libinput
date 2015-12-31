@@ -15,7 +15,7 @@ libshared_la_CFLAGS = $(LIBEVDEV_CFLAGS)
 libshared_la_LIBADD = $(LIBEVDEV_LIBS)
 
 event_debug_SOURCES = event-debug.c
-event_debug_LDADD = ../src/libinput.la libshared.la $(LIBUDEV_LIBS)
+event_debug_LDADD = ../src/libinput.la libshared.la $(LIBUDEV_LIBS) $(LIBEVDEV_LIBS)
 event_debug_LDFLAGS = -no-install
 event_debug_CFLAGS = $(LIBUDEV_CFLAGS) $(LIBEVDEV_CFLAGS)
 
@@ -41,3 +41,5 @@ if BUILD_EVENTGUI
 # event_gui_CFLAGS = $(CAIRO_CFLAGS) $(GTK_CFLAGS) $(LIBUDEV_CFLAGS)
 # event_gui_LDFLAGS = -no-install
 endif
+
+EXTRA_DIST = make-ptraccel-graphs.sh

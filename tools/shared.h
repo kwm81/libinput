@@ -1,23 +1,24 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #ifndef _SHARED_H_
@@ -34,9 +35,11 @@ struct tools_options {
 	enum tools_backend backend;
 	const char *device; /* if backend is BACKEND_DEVICE */
 	const char *seat; /* if backend is BACKEND_UDEV */
+	int grab; /* EVIOCGRAB */
 
 	int verbose;
 	int tapping;
+	int drag_lock;
 	int natural_scroll;
 	int left_handed;
 	int middlebutton;
@@ -44,13 +47,18 @@ struct tools_options {
 	enum libinput_config_scroll_method scroll_method;
 	int scroll_button;
 	double speed;
+	int dwt;
+	enum libinput_config_accel_profile profile;
 };
 
-void tools_init_options(struct tools_options *options);
-int tools_parse_args(int argc, char **argv, struct tools_options *options);
-struct libinput* tools_open_backend(struct tools_options *options,
-				    void *userdata,
-				    const struct libinput_interface *interface);
+struct tools_context {
+	struct tools_options options;
+	void *user_data;
+};
+
+void tools_init_context(struct tools_context *context);
+int tools_parse_args(int argc, char **argv, struct tools_context *context);
+struct libinput* tools_open_backend(struct tools_context *context);
 void tools_device_apply_config(struct libinput_device *device,
 			       struct tools_options *options);
 void tools_usage();

@@ -1,23 +1,24 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 #define _GNU_SOURCE
 #include <config.h>
@@ -43,7 +44,7 @@
 
 #define clip(val_, min_, max_) min((max_), max((min_), (val_)))
 
-struct tools_options options;
+struct tools_context context;
 
 struct touch {
 	int active;
@@ -70,6 +71,19 @@ struct window {
 
 	/* l/m/r mouse buttons */
 	int l, m, r;
+
+	/* touchpad swipe */
+	struct {
+		int nfingers;
+		double x, y;
+	} swipe;
+
+	struct {
+		int nfingers;
+		double scale;
+		double angle;
+		double x, y;
+	} pinch;
 
 	struct libinput_device *devices[50];
 };
@@ -109,10 +123,47 @@ draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 {
 	struct window *w = data;
 	struct touch *t;
+	int i, offset;
 
 	cairo_set_source_rgb(cr, 1, 1, 1);
 	cairo_rectangle(cr, 0, 0, w->width, w->height);
 	cairo_fill(cr);
+
+	/* swipe */
+	cairo_save(cr);
+	cairo_translate(cr, w->swipe.x, w->swipe.y);
+	for (i = 0; i < w->swipe.nfingers; i++) {
+		cairo_set_source_rgb(cr, .8, .8, .4);
+		cairo_arc(cr, (i - 2) * 40, 0, 20, 0, 2 * M_PI);
+		cairo_fill(cr);
+	}
+
+	for (i = 0; i < 4; i++) { /* 4 fg max */
+		cairo_set_source_rgb(cr, 0, 0, 0);
+		cairo_arc(cr, (i - 2) * 40, 0, 20, 0, 2 * M_PI);
+		cairo_stroke(cr);
+	}
+	cairo_restore(cr);
+
+	/* pinch */
+	cairo_save(cr);
+	offset = w->pinch.scale * 100;
+	cairo_translate(cr, w->pinch.x, w->pinch.y);
+	cairo_rotate(cr, w->pinch.angle * M_PI/180.0);
+	if (w->pinch.nfingers > 0) {
+		cairo_set_source_rgb(cr, .4, .4, .8);
+		cairo_arc(cr, offset, -offset, 20, 0, 2 * M_PI);
+		cairo_arc(cr, -offset, offset, 20, 0, 2 * M_PI);
+		cairo_fill(cr);
+	}
+
+	cairo_set_source_rgb(cr, 0, 0, 0);
+	cairo_arc(cr, offset, -offset, 20, 0, 2 * M_PI);
+	cairo_stroke(cr);
+	cairo_arc(cr, -offset, offset, 20, 0, 2 * M_PI);
+	cairo_stroke(cr);
+
+	cairo_restore(cr);
 
 	/* draw pointer sprite */
 	cairo_set_source_rgb(cr, 0, 0, 0);
@@ -190,6 +241,13 @@ map_event_cb(GtkWidget *widget, GdkEvent *event, gpointer data)
 	w->vy = w->height/2;
 	w->hx = w->width/2;
 	w->hy = w->height/2;
+
+	w->swipe.x = w->width/2;
+	w->swipe.y = w->height/2;
+
+	w->pinch.scale = 1.0;
+	w->pinch.x = w->width/2;
+	w->pinch.y = w->height/2;
 
 	g_signal_connect(G_OBJECT(w->area), "draw", G_CALLBACK(draw), w);
 
@@ -269,6 +327,7 @@ change_ptraccel(struct window *w, double amount)
 static void
 handle_event_device_notify(struct libinput_event *ev)
 {
+	struct tools_context *context;
 	struct libinput_device *dev = libinput_event_get_device(ev);
 	struct libinput *li;
 	struct window *w;
@@ -285,11 +344,12 @@ handle_event_device_notify(struct libinput_event *ev)
 	    libinput_device_get_name(dev),
 	    type);
 
-	tools_device_apply_config(libinput_event_get_device(ev),
-				  &options);
-
 	li = libinput_event_get_context(ev);
-	w = libinput_get_user_data(li);
+	context = libinput_get_user_data(li);
+	w = context->user_data;
+
+	tools_device_apply_config(libinput_event_get_device(ev),
+				  &context->options);
 
 	if (libinput_event_get_type(ev) == LIBINPUT_EVENT_DEVICE_ADDED) {
 		for (i = 0; i < ARRAY_LENGTH(w->devices); i++) {
@@ -431,11 +491,78 @@ handle_event_button(struct libinput_event *ev, struct window *w)
 
 }
 
+static void
+handle_event_swipe(struct libinput_event *ev, struct window *w)
+{
+	struct libinput_event_gesture *g = libinput_event_get_gesture_event(ev);
+	int nfingers;
+	double dx, dy;
+
+	nfingers = libinput_event_gesture_get_finger_count(g);
+
+	switch (libinput_event_get_type(ev)) {
+	case LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN:
+		w->swipe.nfingers = nfingers;
+		w->swipe.x = w->width/2;
+		w->swipe.y = w->height/2;
+		break;
+	case LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE:
+		dx = libinput_event_gesture_get_dx(g);
+		dy = libinput_event_gesture_get_dy(g);
+		w->swipe.x += dx;
+		w->swipe.y += dy;
+		break;
+	case LIBINPUT_EVENT_GESTURE_SWIPE_END:
+		w->swipe.nfingers = 0;
+		w->swipe.x = w->width/2;
+		w->swipe.y = w->height/2;
+		break;
+	default:
+		abort();
+	}
+}
+
+static void
+handle_event_pinch(struct libinput_event *ev, struct window *w)
+{
+	struct libinput_event_gesture *g = libinput_event_get_gesture_event(ev);
+	int nfingers;
+	double dx, dy;
+
+	nfingers = libinput_event_gesture_get_finger_count(g);
+
+	switch (libinput_event_get_type(ev)) {
+	case LIBINPUT_EVENT_GESTURE_PINCH_BEGIN:
+		w->pinch.nfingers = nfingers;
+		w->pinch.x = w->width/2;
+		w->pinch.y = w->height/2;
+		break;
+	case LIBINPUT_EVENT_GESTURE_PINCH_UPDATE:
+		dx = libinput_event_gesture_get_dx(g);
+		dy = libinput_event_gesture_get_dy(g);
+		w->pinch.x += dx;
+		w->pinch.y += dy;
+		w->pinch.scale = libinput_event_gesture_get_scale(g);
+		w->pinch.angle += libinput_event_gesture_get_angle_delta(g);
+		break;
+	case LIBINPUT_EVENT_GESTURE_PINCH_END:
+		w->pinch.nfingers = 0;
+		w->pinch.x = w->width/2;
+		w->pinch.y = w->height/2;
+		w->pinch.angle = 0.0;
+		w->pinch.scale = 1.0;
+		break;
+	default:
+		abort();
+	}
+}
+
 static gboolean
 handle_event_libinput(GIOChannel *source, GIOCondition condition, gpointer data)
 {
 	struct libinput *li = data;
-	struct window *w = libinput_get_user_data(li);
+	struct tools_context *context = libinput_get_user_data(li);
+	struct window *w = context->user_data;
 	struct libinput_event *ev;
 
 	libinput_dispatch(li);
@@ -475,6 +602,16 @@ handle_event_libinput(GIOChannel *source, GIOCondition condition, gpointer data)
 				return FALSE;
 			}
 			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN:
+		case LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE:
+		case LIBINPUT_EVENT_GESTURE_SWIPE_END:
+			handle_event_swipe(ev, w);
+			break;
+		case LIBINPUT_EVENT_GESTURE_PINCH_BEGIN:
+		case LIBINPUT_EVENT_GESTURE_PINCH_UPDATE:
+		case LIBINPUT_EVENT_GESTURE_PINCH_END:
+			handle_event_pinch(ev, w);
+			break;
 		}
 
 		libinput_event_destroy(ev);
@@ -494,24 +631,6 @@ sockets_init(struct libinput *li)
 	g_io_add_watch(c, G_IO_IN, handle_event_libinput, li);
 }
 
-static int
-open_restricted(const char *path, int flags, void *user_data)
-{
-	int fd = open(path, flags);
-	return fd < 0 ? -errno : fd;
-}
-
-static void
-close_restricted(int fd, void *user_data)
-{
-	close(fd);
-}
-
-static const struct libinput_interface interface = {
-	.open_restricted = open_restricted,
-	.close_restricted = close_restricted,
-};
-
 int
 main(int argc, char *argv[])
 {
@@ -521,21 +640,23 @@ main(int argc, char *argv[])
 
 	gtk_init(&argc, &argv);
 
-	tools_init_options(&options);
+	tools_init_context(&context);
 
-	if (tools_parse_args(argc, argv, &options) != 0)
+	if (tools_parse_args(argc, argv, &context) != 0)
 		return 1;
 
 	udev = udev_new();
 	if (!udev)
 		error("Failed to initialize udev\n");
 
-	li = tools_open_backend(&options, &w, &interface);
+	context.user_data = &w;
+	li = tools_open_backend(&context);
 	if (!li)
 		return 1;
 
 	window_init(&w);
 	sockets_init(li);
+	handle_event_libinput(NULL, 0, li);
 
 	gtk_main();
 

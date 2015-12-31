@@ -1,23 +1,25 @@
 /*
  * Copyright © 2013 Jonas Ådahl
+ * Copyright © 2013-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #ifndef LIBINPUT_H
@@ -40,6 +42,8 @@ extern "C" {
 #define LIBINPUT_ATTRIBUTE_DEPRECATED __attribute__ ((deprecated))
 
 /**
+ * @ingroup base
+ *
  * Log priority for internal logging messages.
  */
 enum libinput_log_priority {
@@ -57,7 +61,8 @@ enum libinput_log_priority {
 enum libinput_device_capability {
 	LIBINPUT_DEVICE_CAP_KEYBOARD = 0,
 	LIBINPUT_DEVICE_CAP_POINTER = 1,
-	LIBINPUT_DEVICE_CAP_TOUCH = 2
+	LIBINPUT_DEVICE_CAP_TOUCH = 2,
+	LIBINPUT_DEVICE_CAP_GESTURE = 5,
 };
 
 /**
@@ -176,7 +181,14 @@ enum libinput_event_type {
 	 * Signals the end of a set of touchpoints at one device sample
 	 * time. This event has no coordinate information attached.
 	 */
-	LIBINPUT_EVENT_TOUCH_FRAME
+	LIBINPUT_EVENT_TOUCH_FRAME,
+
+	LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN = 800,
+	LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE,
+	LIBINPUT_EVENT_GESTURE_SWIPE_END,
+	LIBINPUT_EVENT_GESTURE_PINCH_BEGIN,
+	LIBINPUT_EVENT_GESTURE_PINCH_UPDATE,
+	LIBINPUT_EVENT_GESTURE_PINCH_END,
 };
 
 /**
@@ -363,6 +375,19 @@ libinput_event_get_touch_event(struct libinput_event *event);
 /**
  * @ingroup event
  *
+ * Return the gesture event that is this input event. If the event type does
+ * not match the gesture event types, this function returns NULL.
+ *
+ * The inverse of this function is libinput_event_gesture_get_base_event().
+ *
+ * @return A gesture event, or NULL for other events
+ */
+struct libinput_event_gesture *
+libinput_event_get_gesture_event(struct libinput_event *event);
+
+/**
+ * @ingroup event
+ *
  * Return the device event that is this input event. If the event type does
  * not match the device event types, this function returns NULL.
  *
@@ -396,6 +421,14 @@ libinput_event_device_notify_get_base_event(struct libinput_event_device_notify 
  */
 uint32_t
 libinput_event_keyboard_get_time(struct libinput_event_keyboard *event);
+
+/**
+ * @ingroup event_keyboard
+ *
+ * @return The event time for this event in microseconds
+ */
+uint64_t
+libinput_event_keyboard_get_time_usec(struct libinput_event_keyboard *event);
 
 /**
  * @ingroup event_keyboard
@@ -455,6 +488,14 @@ libinput_event_pointer_get_time(struct libinput_event_pointer *event);
 /**
  * @ingroup event_pointer
  *
+ * @return The event time for this event in microseconds
+ */
+uint64_t
+libinput_event_pointer_get_time_usec(struct libinput_event_pointer *event);
+
+/**
+ * @ingroup event_pointer
+ *
  * Return the delta between the last event and the current event. For pointer
  * events that are not of type @ref LIBINPUT_EVENT_POINTER_MOTION, this
  * function returns 0.
@@ -462,8 +503,8 @@ libinput_event_pointer_get_time(struct libinput_event_pointer *event);
  * If a device employs pointer acceleration, the delta returned by this
  * function is the accelerated delta.
  *
- * Relative motion deltas are normalized to represent those of a device with
- * 1000dpi resolution. See @ref motion_normalization for more details.
+ * Relative motion deltas are to be interpreted as pixel movement of a
+ * standardized mouse. See @ref motion_normalization for more details.
  *
  * @note It is an application bug to call this function for events other than
  * @ref LIBINPUT_EVENT_POINTER_MOTION.
@@ -483,8 +524,8 @@ libinput_event_pointer_get_dx(struct libinput_event_pointer *event);
  * If a device employs pointer acceleration, the delta returned by this
  * function is the accelerated delta.
  *
- * Relative motion deltas are normalized to represent those of a device with
- * 1000dpi resolution. See @ref motion_normalization for more details.
+ * Relative motion deltas are to be interpreted as pixel movement of a
+ * standardized mouse. See @ref motion_normalization for more details.
  *
  * @note It is an application bug to call this function for events other than
  * @ref LIBINPUT_EVENT_POINTER_MOTION.
@@ -501,10 +542,11 @@ libinput_event_pointer_get_dy(struct libinput_event_pointer *event);
  * current event. For pointer events that are not of type @ref
  * LIBINPUT_EVENT_POINTER_MOTION, this function returns 0.
  *
- * Relative unaccelerated motion deltas are normalized to represent those of a
- * device with 1000dpi resolution. See @ref motion_normalization for more
- * details. Note that unaccelerated events are not equivalent to 'raw' events
- * as read from the device.
+ * Relative unaccelerated motion deltas are raw device coordinates.
+ * Note that these coordinates are subject to the device's native
+ * resolution. Touchpad coordinates represent raw device coordinates in the
+ * X resolution of the touchpad. See @ref motion_normalization for more
+ * details.
  *
  * @note It is an application bug to call this function for events other than
  * @ref LIBINPUT_EVENT_POINTER_MOTION.
@@ -522,10 +564,11 @@ libinput_event_pointer_get_dx_unaccelerated(
  * current event. For pointer events that are not of type @ref
  * LIBINPUT_EVENT_POINTER_MOTION, this function returns 0.
  *
- * Relative unaccelerated motion deltas are normalized to represent those of a
- * device with 1000dpi resolution. See @ref motion_normalization for more
- * details. Note that unaccelerated events are not equivalent to 'raw' events
- * as read from the device.
+ * Relative unaccelerated motion deltas are raw device coordinates.
+ * Note that these coordinates are subject to the device's native
+ * resolution. Touchpad coordinates represent raw device coordinates in the
+ * X resolution of the touchpad. See @ref motion_normalization for more
+ * details.
  *
  * @note It is an application bug to call this function for events other than
  * @ref LIBINPUT_EVENT_POINTER_MOTION.
@@ -795,6 +838,14 @@ libinput_event_touch_get_time(struct libinput_event_touch *event);
 /**
  * @ingroup event_touch
  *
+ * @return The event time for this event in microseconds
+ */
+uint64_t
+libinput_event_touch_get_time_usec(struct libinput_event_touch *event);
+
+/**
+ * @ingroup event_touch
+ *
  * Get the slot of this touch event. See the kernel's multitouch
  * protocol B documentation for more information.
  *
@@ -847,7 +898,8 @@ libinput_event_touch_get_seat_slot(struct libinput_event_touch *event);
  * LIBINPUT_EVENT_TOUCH_MOTION, this function returns 0.
  *
  * @note It is an application bug to call this function for events of type
- * @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref LIBINPUT_EVENT_TOUCH_MOTION.
+ * other than @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref
+ * LIBINPUT_EVENT_TOUCH_MOTION.
  *
  * @param event The libinput touch event
  * @return The current absolute x coordinate
@@ -866,7 +918,8 @@ libinput_event_touch_get_x(struct libinput_event_touch *event);
  * LIBINPUT_EVENT_TOUCH_MOTION, this function returns 0.
  *
  * @note It is an application bug to call this function for events of type
- * @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref LIBINPUT_EVENT_TOUCH_MOTION.
+ * other than @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref
+ * LIBINPUT_EVENT_TOUCH_MOTION.
  *
  * @param event The libinput touch event
  * @return The current absolute y coordinate
@@ -884,7 +937,8 @@ libinput_event_touch_get_y(struct libinput_event_touch *event);
  * LIBINPUT_EVENT_TOUCH_MOTION, this function returns 0.
  *
  * @note It is an application bug to call this function for events of type
- * @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref LIBINPUT_EVENT_TOUCH_MOTION.
+ * other than @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref
+ * LIBINPUT_EVENT_TOUCH_MOTION.
  *
  * @param event The libinput touch event
  * @param width The current output screen width
@@ -904,7 +958,8 @@ libinput_event_touch_get_x_transformed(struct libinput_event_touch *event,
  * LIBINPUT_EVENT_TOUCH_MOTION, this function returns 0.
  *
  * @note It is an application bug to call this function for events of type
- * @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref LIBINPUT_EVENT_TOUCH_MOTION.
+ * other than @ref LIBINPUT_EVENT_TOUCH_DOWN or @ref
+ * LIBINPUT_EVENT_TOUCH_MOTION.
  *
  * @param event The libinput touch event
  * @param height The current output screen height
@@ -921,6 +976,202 @@ libinput_event_touch_get_y_transformed(struct libinput_event_touch *event,
  */
 struct libinput_event *
 libinput_event_touch_get_base_event(struct libinput_event_touch *event);
+
+/**
+ * @defgroup event_gesture Gesture events
+ *
+ * Gesture events are generated when a gesture is recognized on a touchpad.
+ *
+ * Gesture sequences always start with a LIBINPUT_EVENT_GESTURE_FOO_START
+ * event. All following gesture events will be of the
+ * LIBINPUT_EVENT_GESTURE_FOO_UPDATE type until a
+ * LIBINPUT_EVENT_GESTURE_FOO_END is generated which signals the end of the
+ * gesture.
+ *
+ * See @ref gestures for more information on gesture handling.
+ */
+
+/**
+ * @ingroup event_gesture
+ *
+ * @return The event time for this event
+ */
+uint32_t
+libinput_event_gesture_get_time(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * @return The event time for this event in microseconds
+ */
+uint64_t
+libinput_event_gesture_get_time_usec(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * @return The generic libinput_event of this event
+ */
+struct libinput_event *
+libinput_event_gesture_get_base_event(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the number of fingers used for a gesture. This can be used e.g.
+ * to differentiate between 3 or 4 finger swipes.
+ *
+ * This function can be called on all gesture events and the returned finger
+ * count value will not change during a sequence.
+ *
+ * @return the number of fingers used for a gesture
+ */
+int
+libinput_event_gesture_get_finger_count(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return if the gesture ended normally, or if it was cancelled.
+ * For gesture events that are not of type
+ * @ref LIBINPUT_EVENT_GESTURE_SWIPE_END or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_END, this function returns 0.
+ *
+ * @note It is an application bug to call this function for events other than
+ * @ref LIBINPUT_EVENT_GESTURE_SWIPE_END or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_END.
+ *
+ * @return 0 or 1, with 1 indicating that the gesture was cancelled.
+ */
+int
+libinput_event_gesture_get_cancelled(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the delta between the last event and the current event. For gesture
+ * events that are not of type @ref LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE, this function returns 0.
+ *
+ * If a device employs pointer acceleration, the delta returned by this
+ * function is the accelerated delta.
+ *
+ * Relative motion deltas are normalized to represent those of a device with
+ * 1000dpi resolution. See @ref motion_normalization for more details.
+ *
+ * @return the relative x movement since the last event
+ */
+double
+libinput_event_gesture_get_dx(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the delta between the last event and the current event. For gesture
+ * events that are not of type @ref LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE, this function returns 0.
+ *
+ * If a device employs pointer acceleration, the delta returned by this
+ * function is the accelerated delta.
+ *
+ * Relative motion deltas are normalized to represent those of a device with
+ * 1000dpi resolution. See @ref motion_normalization for more details.
+ *
+ * @return the relative y movement since the last event
+ */
+double
+libinput_event_gesture_get_dy(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the relative delta of the unaccelerated motion vector of the
+ * current event. For gesture events that are not of type
+ * @ref LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE, this function returns 0.
+ *
+ * Relative unaccelerated motion deltas are normalized to represent those of a
+ * device with 1000dpi resolution. See @ref motion_normalization for more
+ * details. Note that unaccelerated events are not equivalent to 'raw' events
+ * as read from the device.
+ *
+ * @return the unaccelerated relative x movement since the last event
+ */
+double
+libinput_event_gesture_get_dx_unaccelerated(
+	struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the relative delta of the unaccelerated motion vector of the
+ * current event. For gesture events that are not of type
+ * @ref LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE, this function returns 0.
+ *
+ * Relative unaccelerated motion deltas are normalized to represent those of a
+ * device with 1000dpi resolution. See @ref motion_normalization for more
+ * details. Note that unaccelerated events are not equivalent to 'raw' events
+ * as read from the device.
+ *
+ * @return the unaccelerated relative y movement since the last event
+ */
+double
+libinput_event_gesture_get_dy_unaccelerated(
+	struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the absolute scale of a pinch gesture, the scale is the division
+ * of the current distance between the fingers and the distance at the start
+ * of the gesture. The scale begins at 1.0, and if e.g. the fingers moved
+ * together by 50% then the scale will become 0.5, if they move twice as far
+ * apart as initially the scale becomes 2.0, etc.
+ *
+ * For gesture events that are of type @ref
+ * LIBINPUT_EVENT_GESTURE_PINCH_BEGIN, this function returns 1.0.
+ *
+ * For gesture events that are of type @ref
+ * LIBINPUT_EVENT_GESTURE_PINCH_END, this function returns the scale value
+ * of the most recent @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE event (if
+ * any) or 1.0 otherwise.
+ *
+ * For all other events this function returns 0.
+ *
+ * @note It is an application bug to call this function for events other than
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_BEGIN, @ref
+ * LIBINPUT_EVENT_GESTURE_PINCH_END or
+ * @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE.
+ *
+ * @return the absolute scale of a pinch gesture
+ */
+double
+libinput_event_gesture_get_scale(struct libinput_event_gesture *event);
+
+/**
+ * @ingroup event_gesture
+ *
+ * Return the angle delta in degrees between the last and the current @ref
+ * LIBINPUT_EVENT_GESTURE_PINCH_UPDATE event. For gesture events that
+ * are not of type @ref LIBINPUT_EVENT_GESTURE_PINCH_UPDATE, this
+ * function returns 0.
+ *
+ * The angle delta is defined as the change in angle of the line formed by
+ * the 2 fingers of a pinch gesture. Clockwise rotation is represented
+ * by a postive delta, counter-clockwise by a negative delta. If e.g. the
+ * fingers are on the 12 and 6 location of a clock face plate and they move
+ * to the 1 resp. 7 location in a single event then the angle delta is
+ * 30 degrees.
+ *
+ * If more than two fingers are present, the angle represents the rotation
+ * around the center of gravity. The calculation of the center of gravity is
+ * implementation-dependent.
+ *
+ * @return the angle delta since the last event
+ */
+double
+libinput_event_gesture_get_angle_delta(struct libinput_event_gesture *event);
 
 /**
  * @defgroup base Initialization and manipulation of libinput contexts
@@ -1201,6 +1452,26 @@ libinput_ref(struct libinput *libinput);
  * Dereference the libinput context. After this, the context may have been
  * destroyed, if the last reference was dereferenced. If so, the context is
  * invalid and may not be interacted with.
+ *
+ * @bug When the refcount reaches zero, libinput_unref() releases resources
+ * even if a caller still holds refcounted references to related resources
+ * (e.g. a libinput_device). When libinput_unref() returns
+ * NULL, the caller must consider any resources related to that context
+ * invalid. See https://bugs.freedesktop.org/show_bug.cgi?id=91872.
+ * Example code:
+ * @code
+ * li = libinput_path_create_context(&interface, NULL);
+ * device = libinput_path_add_device(li, "/dev/input/event0");
+ * // get extra reference to device
+ * libinput_device_ref(device);
+ *
+ * // refcount reaches 0, so *all* resources are cleaned up,
+ * // including device
+ * libinput_unref(li);
+ *
+ * // INCORRECT: device has been cleaned up and must not be used
+ * // li = libinput_device_get_context(device);
+ * @endcode
  *
  * @param libinput A previously initialized libinput context
  * @return NULL if context was destroyed otherwise the passed context
@@ -1881,7 +2152,8 @@ libinput_device_config_tap_set_enabled(struct libinput_device *device,
  * @ingroup config
  *
  * Check if tap-to-click is enabled on this device. If the device does not
- * support tapping, this function always returns 0.
+ * support tapping, this function always returns @ref
+ * LIBINPUT_CONFIG_TAP_DISABLED.
  *
  * @param device The device to configure
  *
@@ -1911,6 +2183,85 @@ libinput_device_config_tap_get_enabled(struct libinput_device *device);
  */
 enum libinput_config_tap_state
 libinput_device_config_tap_get_default_enabled(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ */
+enum libinput_config_drag_lock_state {
+	/** Drag lock is to be disabled, or is currently disabled */
+	LIBINPUT_CONFIG_DRAG_LOCK_DISABLED,
+	/** Drag lock is to be enabled, or is currently disabled */
+	LIBINPUT_CONFIG_DRAG_LOCK_ENABLED,
+};
+
+/**
+ * @ingroup config
+ *
+ * Enable or disable drag-lock during tapping on this device. When enabled,
+ * a finger may be lifted and put back on the touchpad within a timeout and
+ * the drag process continues. When disabled, lifting the finger during a
+ * tap-and-drag will immediately stop the drag. See @ref tapndrag for
+ * details.
+ *
+ * Enabling drag lock on a device that has tapping disabled is permitted,
+ * but has no effect until tapping is enabled.
+ *
+ * @param device The device to configure
+ * @param enable @ref LIBINPUT_CONFIG_DRAG_LOCK_ENABLED to enable drag lock
+ * or @ref LIBINPUT_CONFIG_DRAG_LOCK_DISABLED to disable drag lock
+ *
+ * @return A config status code. Disabling drag lock on a device that does not
+ * support tapping always succeeds.
+ *
+ * @see libinput_device_config_tap_get_drag_lock_enabled
+ * @see libinput_device_config_tap_get_default_drag_lock_enabled
+ */
+enum libinput_config_status
+libinput_device_config_tap_set_drag_lock_enabled(struct libinput_device *device,
+						 enum libinput_config_drag_lock_state enable);
+
+/**
+ * @ingroup config
+ *
+ * Check if drag-lock during tapping is enabled on this device. If the
+ * device does not support tapping, this function always returns
+ * @ref LIBINPUT_CONFIG_DRAG_LOCK_DISABLED.
+ *
+ * Drag lock may be enabled even when tapping is disabled.
+ *
+ * @param device The device to configure
+ *
+ * @retval LIBINPUT_CONFIG_DRAG_LOCK_ENABLED If drag lock is currently enabled
+ * @retval LIBINPUT_CONFIG_DRAG_LOCK_DISABLED If drag lock is currently disabled
+ *
+ * @see libinput_device_config_tap_set_drag_lock_enabled
+ * @see libinput_device_config_tap_get_default_drag_lock_enabled
+ */
+enum libinput_config_drag_lock_state
+libinput_device_config_tap_get_drag_lock_enabled(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ *
+ * Check if drag-lock during tapping is enabled by default on this device.
+ * If the device does not support tapping, this function always returns
+ * @ref LIBINPUT_CONFIG_DRAG_LOCK_DISABLED.
+ *
+ * Drag lock may be enabled by default even when tapping is disabled by
+ * default.
+ *
+ * @param device The device to configure
+ *
+ * @retval LIBINPUT_CONFIG_DRAG_LOCK_ENABLED If drag lock is enabled by
+ * default
+ * @retval LIBINPUT_CONFIG_DRAG_LOCK_DISABLED If drag lock is disabled by
+ * default
+ *
+ * @see libinput_device_config_tap_set_drag_lock_enabled
+ * @see libinput_device_config_tap_get_drag_lock_enabled
+ */
+enum libinput_config_drag_lock_state
+libinput_device_config_tap_get_default_drag_lock_enabled(struct libinput_device *device);
 
 /**
  * @ingroup config
@@ -2201,6 +2552,80 @@ libinput_device_config_accel_get_speed(struct libinput_device *device);
  */
 double
 libinput_device_config_accel_get_default_speed(struct libinput_device *device);
+
+enum libinput_config_accel_profile {
+	/**
+	 * Placeholder for devices that don't have a configurable pointer
+	 * acceleration profile.
+	 */
+	LIBINPUT_CONFIG_ACCEL_PROFILE_NONE = 0,
+	/**
+	 * A flat acceleration profile. Pointer motion is accelerated by a
+	 * constant (device-specific) factor, depending on the current
+	 * speed.
+	 *
+	 * @see libinput_device_config_accel_set_speed
+	 */
+	LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT = (1 << 0),
+
+	/**
+	 * An adaptive acceleration profile. Pointer acceleration depends
+	 * on the input speed. This is the default profile for most devices.
+	 */
+	LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE = (1 << 1),
+};
+
+/**
+ * @ingroup config
+ *
+ * Returns a bitmask of the configurable acceleration modes available on
+ * this device.
+ *
+ * @param device The device to configure
+ *
+ * @return A bitmask of all configurable modes availble on this device.
+ */
+uint32_t
+libinput_device_config_accel_get_profiles(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ *
+ * Set the pointer acceleration profile of this pointer device to the given
+ * mode.
+ *
+ * @param device The device to configure
+ * @param mode The mode to set the device to.
+ *
+ * @return A config status code
+ */
+enum libinput_config_status
+libinput_device_config_accel_set_profile(struct libinput_device *device,
+					 enum libinput_config_accel_profile mode);
+
+/**
+ * @ingroup config
+ *
+ * Get the current pointer acceleration profile for this pointer device.
+ *
+ * @param device The device to configure
+ *
+ * @return The currently configured pointer acceleration profile.
+ */
+enum libinput_config_accel_profile
+libinput_device_config_accel_get_profile(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ *
+ * Return the default pointer acceleration profile for this pointer device.
+ *
+ * @param device The device to configure
+ *
+ * @return The default acceleration profile for this device.
+ */
+enum libinput_config_accel_profile
+libinput_device_config_accel_get_default_profile(struct libinput_device *device);
 
 /**
  * @ingroup config
@@ -2786,6 +3211,96 @@ libinput_device_config_scroll_get_button(struct libinput_device *device);
  */
 uint32_t
 libinput_device_config_scroll_get_default_button(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ *
+ * Possible states for the disable-while-typing feature. See @ref
+ * disable-while-typing for details.
+ */
+enum libinput_config_dwt_state {
+	LIBINPUT_CONFIG_DWT_DISABLED,
+	LIBINPUT_CONFIG_DWT_ENABLED,
+};
+
+/**
+ * @ingroup config
+ *
+ * Check if this device supports configurable disable-while-typing feature.
+ * This feature is usally available on built-in touchpads and disables the
+ * touchpad while typing. See @ref disable-while-typing for details.
+ *
+ * @param device The device to configure
+ * @return 0 if this device does not support disable-while-typing, or 1
+ * otherwise.
+ *
+ * @see libinput_device_config_dwt_set_enabled
+ * @see libinput_device_config_dwt_get_enabled
+ * @see libinput_device_config_dwt_get_default_enabled
+ */
+int
+libinput_device_config_dwt_is_available(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ *
+ * Enable or disable the disable-while-typing feature. When enabled, the
+ * device will be disabled while typing and for a short period after. See
+ * @ref disable-while-typing for details.
+ *
+ * @note Enabling or disabling disable-while-typing may not take effect
+ * immediately.
+ *
+ * @param device The device to configure
+ * @param enable @ref LIBINPUT_CONFIG_DWT_DISABLED to disable
+ * disable-while-typing, @ref LIBINPUT_CONFIG_DWT_ENABLED to enable
+ *
+ * @return A config status code. Disabling disable-while-typing on a
+ * device that does not support the feature always succeeds.
+ *
+ * @see libinput_device_config_dwt_is_available
+ * @see libinput_device_config_dwt_get_enabled
+ * @see libinput_device_config_dwt_get_default_enabled
+ */
+enum libinput_config_status
+libinput_device_config_dwt_set_enabled(struct libinput_device *device,
+				       enum libinput_config_dwt_state enable);
+
+/**
+ * @ingroup config
+ *
+ * Check if the disable-while typing feature is currently enabled on this
+ * device. If the device does not support disable-while-typing, this
+ * function returns @ref LIBINPUT_CONFIG_DWT_DISABLED.
+ *
+ * @param device The device to configure
+ * @return @ref LIBINPUT_CONFIG_DWT_DISABLED if disabled, @ref
+ * LIBINPUT_CONFIG_DWT_ENABLED if enabled.
+ *
+ * @see libinput_device_config_dwt_is_available
+ * @see libinput_device_config_dwt_set_enabled
+ * @see libinput_device_config_dwt_get_default_enabled
+ */
+enum libinput_config_dwt_state
+libinput_device_config_dwt_get_enabled(struct libinput_device *device);
+
+/**
+ * @ingroup config
+ *
+ * Check if the disable-while typing feature is enabled on this device by
+ * default. If the device does not support disable-while-typing, this
+ * function returns @ref LIBINPUT_CONFIG_DWT_DISABLED.
+ *
+ * @param device The device to configure
+ * @return @ref LIBINPUT_CONFIG_DWT_DISABLED if disabled, @ref
+ * LIBINPUT_CONFIG_DWT_ENABLED if enabled.
+ *
+ * @see libinput_device_config_dwt_is_available
+ * @see libinput_device_config_dwt_set_enabled
+ * @see libinput_device_config_dwt_get_enabled
+ */
+enum libinput_config_dwt_state
+libinput_device_config_dwt_get_default_enabled(struct libinput_device *device);
 
 #ifdef __cplusplus
 }

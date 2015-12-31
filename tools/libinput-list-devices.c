@@ -1,28 +1,28 @@
 /*
  * Copyright © 2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #define _GNU_SOURCE
 #include <errno.h>
-#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -39,36 +39,6 @@
 
 #include "shared.h"
 
-static int
-open_restricted(const char *path, int flags, void *user_data)
-{
-	int fd = open(path, flags);
-	if (fd < 0)
-		fprintf(stderr, "Failed to open %s (%s)\n",
-			path, strerror(errno));
-	return fd < 0 ? -errno : fd;
-}
-
-static void
-close_restricted(int fd, void *user_data)
-{
-	close(fd);
-}
-
-static const struct libinput_interface interface = {
-	.open_restricted = open_restricted,
-	.close_restricted = close_restricted,
-};
-
-static inline const char*
-bool_to_str(bool b)
-{
-	if (b)
-		return "yes";
-	else
-		return "no";
-}
-
 static const char *
 tap_default(struct libinput_device *device)
 {
@@ -76,6 +46,18 @@ tap_default(struct libinput_device *device)
 		return "n/a";
 
 	if (libinput_device_config_tap_get_default_enabled(device))
+		return "enabled";
+	else
+		return "disabled";
+}
+
+static const char *
+draglock_default(struct libinput_device *device)
+{
+	if (!libinput_device_config_tap_get_finger_count(device))
+		return "n/a";
+
+	if (libinput_device_config_tap_get_default_drag_lock_enabled(device))
 		return "enabled";
 	else
 		return "disabled";
@@ -124,17 +106,17 @@ calibration_default(struct libinput_device *device)
 	float calibration[6];
 
 	if (!libinput_device_config_calibration_has_matrix(device)) {
-		asprintf(&str, "n/a");
+		xasprintf(&str, "n/a");
 		return str;
 	}
 
 	if (libinput_device_config_calibration_get_default_matrix(device,
 						  calibration) == 0) {
-		asprintf(&str, "identity matrix");
+		xasprintf(&str, "identity matrix");
 		return str;
 	}
 
-	asprintf(&str,
+	xasprintf(&str,
 		 "%.2f %.2f %.2f %.2f %.2f %.2f",
 		 calibration[0],
 		 calibration[1],
@@ -154,13 +136,13 @@ scroll_defaults(struct libinput_device *device)
 
 	scroll_methods = libinput_device_config_scroll_get_methods(device);
 	if (scroll_methods == LIBINPUT_CONFIG_SCROLL_NO_SCROLL) {
-		asprintf(&str, "none");
+		xasprintf(&str, "none");
 		return str;
 	}
 
 	method = libinput_device_config_scroll_get_default_method(device);
 
-	asprintf(&str,
+	xasprintf(&str,
 		 "%s%s%s%s%s%s",
 		 (method == LIBINPUT_CONFIG_SCROLL_2FG) ? "*" : "",
 		 (scroll_methods & LIBINPUT_CONFIG_SCROLL_2FG) ? "two-finger " : "",
@@ -180,18 +162,59 @@ click_defaults(struct libinput_device *device)
 
 	click_methods = libinput_device_config_click_get_methods(device);
 	if (click_methods == LIBINPUT_CONFIG_CLICK_METHOD_NONE) {
-		asprintf(&str, "none");
+		xasprintf(&str, "none");
 		return str;
 	}
 
 	method = libinput_device_config_click_get_default_method(device);
-	asprintf(&str,
+	xasprintf(&str,
 		 "%s%s%s%s",
 		 (method == LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS) ? "*" : "",
 		 (click_methods & LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS) ? "button-areas " : "",
 		 (method == LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER) ? "*" : "",
 		 (click_methods & LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER) ? "clickfinger " : "");
 	return str;
+}
+
+static char*
+accel_profiles(struct libinput_device *device)
+{
+	uint32_t profiles;
+	char *str;
+	enum libinput_config_accel_profile profile;
+
+	if (!libinput_device_config_accel_is_available(device)) {
+		xasprintf(&str, "n/a");
+		return str;
+	}
+
+	profiles = libinput_device_config_accel_get_profiles(device);
+	if (profiles == LIBINPUT_CONFIG_ACCEL_PROFILE_NONE) {
+		xasprintf(&str, "none");
+		return str;
+	}
+
+	profile = libinput_device_config_accel_get_default_profile(device);
+	xasprintf(&str,
+		  "%s%s%s%s",
+		  (profile == LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT) ? "*" : "",
+		  (profiles & LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT) ? "flat" : "",
+		  (profile == LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE) ? "*" : "",
+		  (profiles & LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE) ? "adaptive" : "");
+
+	return str;
+}
+
+static const char *
+dwt_default(struct libinput_device *device)
+{
+	if (!libinput_device_config_dwt_is_available(device))
+		return "n/a";
+
+	if (libinput_device_config_dwt_get_default_enabled(device))
+		return "enabled";
+	else
+		return "disabled";
 }
 
 static void
@@ -241,6 +264,7 @@ print_device_notify(struct libinput_event *ev)
 	printf("\n");
 
 	printf("Tap-to-click:     %s\n", tap_default(dev));
+	printf("Tap drag lock:    %s\n", draglock_default(dev));
 	printf("Left-handed:      %s\n", left_handed_default(dev));
 	printf("Nat.scrolling:    %s\n", nat_scroll_default(dev));
 	printf("Middle emulation: %s\n", middle_emulation_default(dev));
@@ -254,6 +278,12 @@ print_device_notify(struct libinput_event *ev)
 
 	str = click_defaults(dev);
 	printf("Click methods:    %s\n", str);
+	free(str);
+
+	printf("Disable-w-typing: %s\n", dwt_default(dev));
+
+	str = accel_profiles(dev);
+	printf("Accel profiles:   %s\n", str);
 	free(str);
 
 	printf("\n");
@@ -280,7 +310,7 @@ int
 main(int argc, char **argv)
 {
 	struct libinput *li;
-	struct tools_options options;
+	struct tools_context context;
 	struct libinput_event *ev;
 
 	if (argc > 1) {
@@ -296,9 +326,9 @@ main(int argc, char **argv)
 		}
 	}
 
-	tools_init_options(&options);
+	tools_init_context(&context);
 
-	li = tools_open_backend(&options, NULL, &interface);
+	li = tools_open_backend(&context);
 	if (!li)
 		return 1;
 

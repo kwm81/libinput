@@ -1,24 +1,27 @@
 /*
- * Copyright © 2014 Red Hat, Inc.
+ * Copyright © 2014-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
+
+#include "config.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -29,9 +32,8 @@
 
 #include "evdev-mt-touchpad.h"
 
-#define DEFAULT_BUTTON_MOTION_THRESHOLD 0.02 /* 2% of size */
-#define DEFAULT_BUTTON_ENTER_TIMEOUT 100 /* ms */
-#define DEFAULT_BUTTON_LEAVE_TIMEOUT 300 /* ms */
+#define DEFAULT_BUTTON_ENTER_TIMEOUT ms2us(100)
+#define DEFAULT_BUTTON_LEAVE_TIMEOUT ms2us(300)
 
 /*****************************************
  * BEFORE YOU EDIT THIS FILE, look at the state diagram in
@@ -43,8 +45,6 @@
  *
  * The state machine only affects the soft button area code.
  */
-
-#define CASE_RETURN_STRING(a) case a: return #a;
 
 static inline const char*
 button_state_to_str(enum button_state state) {
@@ -392,7 +392,7 @@ tp_button_handle_event(struct tp_dispatch *tp,
 		       enum button_event event,
 		       uint64_t time)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 	enum button_state current = t->button.state;
 
 	switch(t->button.state) {
@@ -478,7 +478,7 @@ tp_process_button(struct tp_dispatch *tp,
 		  const struct input_event *e,
 		  uint64_t time)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 	uint32_t mask = 1 << (e->code - BTN_LEFT);
 
 	/* Ignore other buttons on clickpads */
@@ -523,20 +523,19 @@ tp_init_softbuttons(struct tp_dispatch *tp,
 	absinfo_y = device->abs.absinfo_y;
 
 	xoffset = absinfo_x->minimum,
-	yoffset = absinfo_y->minimum;
+	yoffset = absinfo_y->minimum,
 	yres = absinfo_y->resolution;
-	width = abs(absinfo_x->maximum - absinfo_x->minimum);
-	height = abs(absinfo_y->maximum - absinfo_y->minimum);
+	width = device->abs.dimensions.x;
+	height = device->abs.dimensions.y;
 
-	/* button height: 10mm or 15% of the touchpad height,
+	/* button height: 10mm or 15% or the touchpad height,
 	   whichever is smaller */
-	if (!device->abs.fake_resolution && (height * 0.15/yres) > 10) {
+	if ((height * 0.15)/yres > 10) {
 		tp->buttons.bottom_area.top_edge =
-		absinfo_y->maximum - 10 * yres;
+			absinfo_y->maximum - 10 * yres;
 	} else {
 		tp->buttons.bottom_area.top_edge = height * .85 + yoffset;
 	}
-
 	tp->buttons.bottom_area.rightbutton_left_edge = width/2 + xoffset;
 }
 
@@ -545,7 +544,7 @@ tp_init_top_softbuttons(struct tp_dispatch *tp,
 			struct evdev_device *device,
 			double topbutton_size_mult)
 {
-	int width, height;
+	int width;
 	const struct input_absinfo *absinfo_x, *absinfo_y;
 	int xoffset, yoffset;
 	int yres;
@@ -556,8 +555,7 @@ tp_init_top_softbuttons(struct tp_dispatch *tp,
 	xoffset = absinfo_x->minimum,
 	yoffset = absinfo_y->minimum;
 	yres = absinfo_y->resolution;
-	width = abs(absinfo_x->maximum - absinfo_x->minimum);
-	height = abs(absinfo_y->maximum - absinfo_y->minimum);
+	width = device->abs.dimensions.x;
 
 	if (tp->buttons.has_topbuttons) {
 		/* T440s has the top button line 5mm from the top, event
@@ -565,14 +563,8 @@ tp_init_top_softbuttons(struct tp_dispatch *tp,
 		   top - which maps to 15%.  We allow the caller to enlarge the
 		   area using a multiplier for the touchpad disabled case. */
 		double topsize_mm = 10 * topbutton_size_mult;
-		double topsize_pct = .15 * topbutton_size_mult;
 
-		if (!device->abs.fake_resolution) {
-			tp->buttons.top_area.bottom_edge =
-			yoffset + topsize_mm * yres;
-		} else {
-			tp->buttons.top_area.bottom_edge = height * topsize_pct + yoffset;
-		}
+		tp->buttons.top_area.bottom_edge = yoffset + topsize_mm * yres;
 		tp->buttons.top_area.rightbutton_left_edge = width * .58 + xoffset;
 		tp->buttons.top_area.leftbutton_right_edge = width * .42 + xoffset;
 	} else {
@@ -647,22 +639,19 @@ static enum libinput_config_click_method
 tp_click_get_default_method(struct tp_dispatch *tp)
 {
 	struct evdev_device *device = tp->device;
+	uint32_t clickfinger_models = EVDEV_MODEL_CHROMEBOOK |
+				      EVDEV_MODEL_SYSTEM76_BONOBO |
+				      EVDEV_MODEL_SYSTEM76_GALAGO |
+				      EVDEV_MODEL_SYSTEM76_KUDU |
+				      EVDEV_MODEL_CLEVO_W740SU;
 
 	if (!tp->buttons.is_clickpad)
 		return LIBINPUT_CONFIG_CLICK_METHOD_NONE;
 	else if (libevdev_get_id_vendor(tp->device->evdev) == VENDOR_ID_APPLE)
 		return LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
 
-	switch (device->model) {
-	case EVDEV_MODEL_CHROMEBOOK:
-	case EVDEV_MODEL_SYSTEM76_BONOBO:
-	case EVDEV_MODEL_SYSTEM76_GALAGO:
-	case EVDEV_MODEL_SYSTEM76_KUDU:
-	case EVDEV_MODEL_CLEVO_W740SU:
+	if (device->model_flags & clickfinger_models)
 		return LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER;
-	default:
-		break;
-	}
 
 	return LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS;
 }
@@ -676,14 +665,41 @@ tp_button_config_click_get_default_method(struct libinput_device *device)
 	return tp_click_get_default_method(tp);
 }
 
+static inline void
+tp_init_middlebutton_emulation(struct tp_dispatch *tp,
+			       struct evdev_device *device)
+{
+	bool enable_by_default,
+	     want_config_option;
+
+	if (tp->buttons.is_clickpad)
+		return;
+
+	/* init middle button emulation on non-clickpads, but only if we
+	 * don't have a middle button. Exception: ALPS touchpads don't know
+	 * if they have a middle button, so we always want the option there
+	 * and enabled by default.
+	 */
+	if (!libevdev_has_event_code(device->evdev, EV_KEY, BTN_MIDDLE)) {
+		enable_by_default = true;
+		want_config_option = false;
+	} else if (device->model_flags & EVDEV_MODEL_ALPS_TOUCHPAD) {
+		enable_by_default = true;
+		want_config_option = true;
+	} else
+		return;
+
+	evdev_init_middlebutton(tp->device,
+				enable_by_default,
+				want_config_option);
+}
+
 int
 tp_init_buttons(struct tp_dispatch *tp,
 		struct evdev_device *device)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 	struct tp_touch *t;
-	int width, height;
-	double diagonal;
 	const struct input_absinfo *absinfo_x, *absinfo_y;
 
 	tp->buttons.is_clickpad = libevdev_has_property(device->evdev,
@@ -698,7 +714,8 @@ tp_init_buttons(struct tp_dispatch *tp,
 				       "%s: clickpad advertising right button\n",
 				       device->devname);
 	} else if (libevdev_has_event_code(device->evdev, EV_KEY, BTN_LEFT) &&
-		   !tp->buttons.is_clickpad) {
+		   !tp->buttons.is_clickpad &&
+		   libevdev_get_id_vendor(device->evdev) != VENDOR_ID_APPLE) {
 			log_bug_kernel(libinput,
 				       "%s: non clickpad without right button?\n",
 				       device->devname);
@@ -707,11 +724,9 @@ tp_init_buttons(struct tp_dispatch *tp,
 	absinfo_x = device->abs.absinfo_x;
 	absinfo_y = device->abs.absinfo_y;
 
-	width = abs(absinfo_x->maximum - absinfo_x->minimum);
-	height = abs(absinfo_y->maximum - absinfo_y->minimum);
-	diagonal = sqrt(width*width + height*height);
-
-	tp->buttons.motion_dist = diagonal * DEFAULT_BUTTON_MOTION_THRESHOLD;
+	/* pinned-finger motion threshold, see tp_unpin_finger. */
+	tp->buttons.motion_dist.x_scale_coeff = 1.0/absinfo_x->resolution;
+	tp->buttons.motion_dist.y_scale_coeff = 1.0/absinfo_y->resolution;
 
 	tp->buttons.config_method.get_methods = tp_button_config_click_get_methods;
 	tp->buttons.config_method.set_method = tp_button_config_click_set_method;
@@ -724,14 +739,12 @@ tp_init_buttons(struct tp_dispatch *tp,
 
 	tp_init_top_softbuttons(tp, device, 1.0);
 
-	if (!tp->buttons.is_clickpad &&
-	    !libevdev_has_event_code(device->evdev, EV_KEY, BTN_MIDDLE))
-		evdev_init_middlebutton(tp->device, true, false);
+	tp_init_middlebutton_emulation(tp, device);
 
 	tp_for_each_touch(tp, t) {
 		t->button.state = BUTTON_STATE_NONE;
 		libinput_timer_init(&t->button.timer,
-				    tp->device->base.seat->libinput,
+				    tp_libinput_context(tp),
 				    tp_button_handle_timeout, t);
 	}
 
@@ -782,6 +795,112 @@ tp_post_physical_buttons(struct tp_dispatch *tp, uint64_t time)
 	return 0;
 }
 
+static inline int
+tp_check_clickfinger_distance(struct tp_dispatch *tp,
+			      struct tp_touch *t1,
+			      struct tp_touch *t2)
+{
+	double x, y;
+	int within_distance = 0;
+	int xres, yres;
+	int bottom_threshold;
+
+	if (!t1 || !t2)
+		return 0;
+
+	if (t1->thumb.state == THUMB_STATE_YES ||
+	    t2->thumb.state == THUMB_STATE_YES)
+		return 0;
+
+	x = abs(t1->point.x - t2->point.x);
+	y = abs(t1->point.y - t2->point.y);
+
+	xres = tp->device->abs.absinfo_x->resolution;
+	yres = tp->device->abs.absinfo_y->resolution;
+	x /= xres;
+	y /= yres;
+
+	/* maximum horiz spread is 40mm horiz, 30mm vert, anything wider
+	 * than that is probably a gesture. */
+	if (x > 40 || y > 30)
+		goto out;
+
+	within_distance = 1;
+
+	/* if y spread is <= 20mm, they're definitely together. */
+	if (y <= 20)
+		goto out;
+
+	/* if they're vertically spread between 20-40mm, they're not
+	 * together if:
+	 * - the touchpad's vertical size is >50mm, anything smaller is
+	 *   unlikely to have a thumb resting on it
+	 * - and one of the touches is in the bottom 20mm of the touchpad
+	 *   and the other one isn't
+	 */
+
+	if (tp->device->abs.dimensions.y/yres < 50)
+		goto out;
+
+	bottom_threshold = tp->device->abs.absinfo_y->maximum - 20 * yres;
+	if ((t1->point.y > bottom_threshold) !=
+		    (t2->point.y > bottom_threshold))
+		within_distance = 0;
+
+out:
+	return within_distance;
+}
+
+static uint32_t
+tp_clickfinger_set_button(struct tp_dispatch *tp)
+{
+	uint32_t button;
+	unsigned int nfingers = tp->nfingers_down;
+	struct tp_touch *t;
+	struct tp_touch *first = NULL,
+			*second = NULL;
+
+	if (nfingers != 2)
+		goto out;
+
+	/* two fingers down on the touchpad. Check for distance
+	 * between the fingers. */
+	tp_for_each_touch(tp, t) {
+		if (t->state != TOUCH_BEGIN && t->state != TOUCH_UPDATE)
+			continue;
+
+		if (t->thumb.state == THUMB_STATE_YES)
+			continue;
+
+		if (!first)
+			first = t;
+		else if (!second)
+			second = t;
+	}
+
+	if (!first || !second) {
+		nfingers = 1;
+		goto out;
+	}
+
+	if (tp_check_clickfinger_distance(tp, first, second))
+		nfingers = 2;
+	else
+		nfingers = 1;
+
+out:
+	switch (nfingers) {
+	case 0:
+	case 1: button = BTN_LEFT; break;
+	case 2: button = BTN_RIGHT; break;
+	default:
+		button = BTN_MIDDLE; break;
+		break;
+	}
+
+	return button;
+}
+
 static int
 tp_notify_clickpadbutton(struct tp_dispatch *tp,
 			 uint64_t time,
@@ -794,8 +913,8 @@ tp_notify_clickpadbutton(struct tp_dispatch *tp,
 		struct evdev_dispatch *dispatch = tp->buttons.trackpoint->dispatch;
 		struct input_event event;
 
-		event.time.tv_sec = time/1000;
-		event.time.tv_usec = (time % 1000) * 1000;
+		event.time.tv_sec = time / ms2us(1000);
+		event.time.tv_usec = time % ms2us(1000);
 		event.type = EV_KEY;
 		event.code = button;
 		event.value = (state == LIBINPUT_BUTTON_STATE_PRESSED) ? 1 : 0;
@@ -810,20 +929,17 @@ tp_notify_clickpadbutton(struct tp_dispatch *tp,
 	if (tp->device->suspended)
 		return 0;
 
+	/* A button click always terminates edge scrolling, even if we
+	 * don't end up sending a button event. */
+	tp_edge_scroll_stop_events(tp, time);
+
 	/*
 	 * If the user has requested clickfinger replace the button chosen
 	 * by the softbutton code with one based on the number of fingers.
 	 */
 	if (tp->buttons.click_method == LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER &&
 	    state == LIBINPUT_BUTTON_STATE_PRESSED) {
-		switch (tp->nfingers_down) {
-		case 0:
-		case 1: button = BTN_LEFT; break;
-		case 2: button = BTN_RIGHT; break;
-		case 3: button = BTN_MIDDLE; break;
-		default:
-			button = 0;
-		}
+		button = tp_clickfinger_set_button(tp);
 		tp->buttons.active = button;
 
 		if (!button)
@@ -843,7 +959,6 @@ tp_post_clickpadbutton_buttons(struct tp_dispatch *tp, uint64_t time)
 
 	current = tp->buttons.state;
 	old = tp->buttons.old_state;
-	button = 0;
 	is_top = 0;
 
 	if (!tp->buttons.click_pending && current == old)

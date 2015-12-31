@@ -1,23 +1,25 @@
 /*
  * Copyright © 2013 Jonas Ådahl
+ * Copyright © 2013-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #ifndef LIBINPUT_PRIVATE_H
@@ -89,6 +91,8 @@ struct libinput {
 	enum libinput_log_priority log_priority;
 	void *user_data;
 	int refcount;
+
+	struct list device_group_list;
 };
 
 typedef void (*libinput_seat_destroy_func) (struct libinput_seat *seat);
@@ -115,6 +119,11 @@ struct libinput_device_config_tap {
 						   enum libinput_config_tap_state enable);
 	enum libinput_config_tap_state (*get_enabled)(struct libinput_device *device);
 	enum libinput_config_tap_state (*get_default)(struct libinput_device *device);
+
+	enum libinput_config_status (*set_draglock_enabled)(struct libinput_device *device,
+							    enum libinput_config_drag_lock_state);
+	enum libinput_config_drag_lock_state (*get_draglock_enabled)(struct libinput_device *device);
+	enum libinput_config_drag_lock_state (*get_default_draglock_enabled)(struct libinput_device *device);
 };
 
 struct libinput_device_config_calibration {
@@ -141,6 +150,12 @@ struct libinput_device_config_accel {
 						 double speed);
 	double (*get_speed)(struct libinput_device *device);
 	double (*get_default_speed)(struct libinput_device *device);
+
+	uint32_t (*get_profiles)(struct libinput_device *device);
+	enum libinput_config_status (*set_profile)(struct libinput_device *device,
+						   enum libinput_config_accel_profile);
+	enum libinput_config_accel_profile (*get_profile)(struct libinput_device *device);
+	enum libinput_config_accel_profile (*get_default_profile)(struct libinput_device *device);
 };
 
 struct libinput_device_config_natural_scroll {
@@ -189,6 +204,17 @@ struct libinput_device_config_middle_emulation {
 			 struct libinput_device *device);
 };
 
+struct libinput_device_config_dwt {
+	int (*is_available)(struct libinput_device *device);
+	enum libinput_config_status (*set_enabled)(
+			 struct libinput_device *device,
+			 enum libinput_config_dwt_state enable);
+	enum libinput_config_dwt_state (*get_enabled)(
+			 struct libinput_device *device);
+	enum libinput_config_dwt_state (*get_default_enabled)(
+			 struct libinput_device *device);
+};
+
 struct libinput_device_config {
 	struct libinput_device_config_tap *tap;
 	struct libinput_device_config_calibration *calibration;
@@ -199,12 +225,15 @@ struct libinput_device_config {
 	struct libinput_device_config_scroll_method *scroll_method;
 	struct libinput_device_config_click_method *click_method;
 	struct libinput_device_config_middle_emulation *middle_emulation;
+	struct libinput_device_config_dwt *dwt;
 };
 
 struct libinput_device_group {
 	int refcount;
 	void *user_data;
 	char *identifier; /* unique identifier or NULL for singletons */
+
+	struct list link;
 };
 
 struct libinput_device {
@@ -237,16 +266,32 @@ typedef void (*libinput_source_dispatch_t)(void *data);
 #define log_bug_libinput(li_, ...) log_msg((li_), LIBINPUT_LOG_PRIORITY_ERROR, "libinput bug: " __VA_ARGS__)
 #define log_bug_client(li_, ...) log_msg((li_), LIBINPUT_LOG_PRIORITY_ERROR, "client bug: " __VA_ARGS__)
 
+#define log_debug_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_DEBUG, __VA_ARGS__)
+#define log_info_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_INFO, __VA_ARGS__)
+#define log_error_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, __VA_ARGS__)
+#define log_bug_kernel_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "kernel bug: " __VA_ARGS__)
+#define log_bug_libinput_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "libinput bug: " __VA_ARGS__)
+#define log_bug_client_ratelimit(li_, r_, ...) log_msg_ratelimit((li_), (r_), LIBINPUT_LOG_PRIORITY_ERROR, "client bug: " __VA_ARGS__)
+
+void
+log_msg_ratelimit(struct libinput *libinput,
+		  struct ratelimit *ratelimit,
+		  enum libinput_log_priority priority,
+		  const char *format, ...)
+	LIBINPUT_ATTRIBUTE_PRINTF(4, 5);
+
 void
 log_msg(struct libinput *libinput,
 	enum libinput_log_priority priority,
-	const char *format, ...);
+	const char *format, ...)
+	LIBINPUT_ATTRIBUTE_PRINTF(3, 4);
 
 void
 log_msg_va(struct libinput *libinput,
 	   enum libinput_log_priority priority,
 	   const char *format,
-	   va_list args);
+	   va_list args)
+	LIBINPUT_ATTRIBUTE_PRINTF(3, 0);
 
 int
 libinput_init(struct libinput *libinput,
@@ -271,6 +316,9 @@ open_restricted(struct libinput *libinput,
 void
 close_restricted(struct libinput *libinput, int fd);
 
+bool
+ignore_litest_test_suite_device(struct udev_device *device);
+
 void
 libinput_seat_init(struct libinput_seat *seat,
 		   struct libinput *libinput,
@@ -283,7 +331,12 @@ libinput_device_init(struct libinput_device *device,
 		     struct libinput_seat *seat);
 
 struct libinput_device_group *
-libinput_device_group_create(const char *identifier);
+libinput_device_group_create(struct libinput *libinput,
+			     const char *identifier);
+
+struct libinput_device_group *
+libinput_device_group_find_group(struct libinput *libinput,
+				 const char *identifier);
 
 void
 libinput_device_set_device_group(struct libinput_device *device,
@@ -317,7 +370,7 @@ void
 pointer_notify_motion(struct libinput_device *device,
 		      uint64_t time,
 		      const struct normalized_coords *delta,
-		      const struct normalized_coords *unaccel);
+		      const struct device_float_coords *raw);
 
 void
 pointer_notify_motion_absolute(struct libinput_device *device,
@@ -359,6 +412,35 @@ touch_notify_touch_up(struct libinput_device *device,
 		      int32_t seat_slot);
 
 void
+gesture_notify_swipe(struct libinput_device *device,
+		     uint64_t time,
+		     enum libinput_event_type type,
+		     int finger_count,
+		     const struct normalized_coords *delta,
+		     const struct normalized_coords *unaccel);
+
+void
+gesture_notify_swipe_end(struct libinput_device *device,
+			 uint64_t time,
+			 int finger_count,
+			 int cancelled);
+
+void
+gesture_notify_pinch(struct libinput_device *device,
+		     uint64_t time,
+		     enum libinput_event_type type,
+		     const struct normalized_coords *delta,
+		     const struct normalized_coords *unaccel,
+		     double scale,
+		     double angle);
+
+void
+gesture_notify_pinch_end(struct libinput_device *device,
+			 uint64_t time,
+			 double scale,
+			 int cancelled);
+
+void
 touch_notify_frame(struct libinput_device *device,
 		   uint64_t time);
 
@@ -372,7 +454,7 @@ libinput_now(struct libinput *libinput)
 		return 0;
 	}
 
-	return ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000;
+	return s2us(ts.tv_sec) + ns2us(ts.tv_nsec);
 }
 
 static inline struct device_float_coords
@@ -384,6 +466,39 @@ device_delta(struct device_coords a, struct device_coords b)
 	delta.y = a.y - b.y;
 
 	return delta;
+}
+
+static inline struct device_float_coords
+device_average(struct device_coords a, struct device_coords b)
+{
+	struct device_float_coords average;
+
+	average.x = (a.x + b.x) / 2.0;
+	average.y = (a.y + b.y) / 2.0;
+
+	return average;
+}
+
+static inline struct device_float_coords
+device_float_delta(struct device_float_coords a, struct device_float_coords b)
+{
+	struct device_float_coords delta;
+
+	delta.x = a.x - b.x;
+	delta.y = a.y - b.y;
+
+	return delta;
+}
+
+static inline struct device_float_coords
+device_float_average(struct device_float_coords a, struct device_float_coords b)
+{
+	struct device_float_coords average;
+
+	average.x = (a.x + b.x) / 2.0;
+	average.y = (a.y + b.y) / 2.0;
+
+	return average;
 }
 
 static inline double

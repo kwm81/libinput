@@ -1,23 +1,24 @@
 /*
  * Copyright © 2014 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and
- * its documentation for any purpose is hereby granted without fee, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the name of the copyright holders not be used in
- * advertising or publicity pertaining to distribution of the software
- * without specific, written prior permission.  The copyright holders make
- * no representations about the suitability of this software for any
- * purpose.  It is provided "as is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
- * FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER
- * RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
- * CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #include <config.h>
@@ -69,7 +70,8 @@ START_TEST(device_sendevents_config_touchpad)
 	expected = LIBINPUT_CONFIG_SEND_EVENTS_DISABLED;
 
 	/* The wacom devices in the test suite are external */
-	if (libevdev_get_id_vendor(dev->evdev) != 0x56a) /* wacom */
+	if (libevdev_get_id_vendor(dev->evdev) != VENDOR_ID_WACOM &&
+	    libevdev_get_id_bustype(dev->evdev) != BUS_BLUETOOTH)
 		expected |=
 			LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE;
 
@@ -88,7 +90,8 @@ START_TEST(device_sendevents_config_touchpad_superset)
 	uint32_t modes;
 
 	/* The wacom devices in the test suite are external */
-	if (libevdev_get_id_vendor(dev->evdev) == 0x56a) /* wacom */
+	if (libevdev_get_id_vendor(dev->evdev) == VENDOR_ID_WACOM ||
+	    libevdev_get_id_bustype(dev->evdev) == BUS_BLUETOOTH)
 		return;
 
 	device = dev->libinput_device;
@@ -671,6 +674,22 @@ START_TEST(device_context)
 }
 END_TEST
 
+static int open_restricted(const char *path, int flags, void *data)
+{
+	int fd;
+	fd = open(path, flags);
+	return fd < 0 ? -errno : fd;
+}
+static void close_restricted(int fd, void *data)
+{
+	close(fd);
+}
+
+const struct libinput_interface simple_interface = {
+	.open_restricted = open_restricted,
+	.close_restricted = close_restricted,
+};
+
 START_TEST(device_group_get)
 {
 	struct litest_device *dev = litest_current_device();
@@ -716,6 +735,36 @@ START_TEST(device_group_ref)
 	ck_assert(libinput_device_group_unref(group) == NULL);
 
 	libinput_unref(li);
+}
+END_TEST
+
+START_TEST(device_group_leak)
+{
+	struct libinput *li;
+	struct libinput_device *device;
+	struct libevdev_uinput *uinput;
+	struct libinput_device_group *group;
+
+	uinput = litest_create_uinput_device("test device", NULL,
+					     EV_KEY, BTN_LEFT,
+					     EV_KEY, BTN_RIGHT,
+					     EV_REL, REL_X,
+					     EV_REL, REL_Y,
+					     -1);
+
+	li = libinput_path_create_context(&simple_interface, NULL);
+	device = libinput_path_add_device(li,
+					  libevdev_uinput_get_devnode(uinput));
+
+	group = libinput_device_get_device_group(device);
+	libinput_device_group_ref(group);
+
+	libinput_path_remove_device(device);
+
+	libevdev_uinput_destroy(uinput);
+	libinput_unref(li);
+
+	/* the device group leaks, check valgrind */
 }
 END_TEST
 
@@ -946,6 +995,265 @@ START_TEST(device_wheel_only)
 }
 END_TEST
 
+START_TEST(device_accelerometer)
+{
+	struct libinput *li;
+	struct libevdev_uinput *uinput;
+	struct libinput_device *device;
+
+	struct input_absinfo absinfo[] = {
+		{ ABS_X, 0, 10, 0, 0, 10 },
+		{ ABS_Y, 0, 10, 0, 0, 10 },
+		{ ABS_Z, 0, 10, 0, 0, 10 },
+		{ -1, -1, -1, -1, -1, -1 }
+	};
+
+	li = litest_create_context();
+	litest_disable_log_handler(li);
+
+	uinput = litest_create_uinput_abs_device("test device", NULL,
+						 absinfo,
+						 -1);
+	device = libinput_path_add_device(li,
+					  libevdev_uinput_get_devnode(uinput));
+	litest_assert_ptr_null(device);
+	libevdev_uinput_destroy(uinput);
+	litest_restore_log_handler(li);
+	libinput_unref(li);
+}
+END_TEST
+
+START_TEST(device_udev_tag_alps)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput_device *device = dev->libinput_device;
+	struct udev_device *d;
+	const char *prop;
+
+	d = libinput_device_get_udev_device(device);
+	prop = udev_device_get_property_value(d,
+					      "LIBINPUT_MODEL_ALPS_TOUCHPAD");
+
+	if (strstr(libinput_device_get_name(device), "ALPS"))
+		ck_assert_notnull(prop);
+	else
+		ck_assert(prop == NULL);
+
+	udev_device_unref(d);
+}
+END_TEST
+
+START_TEST(device_udev_tag_wacom)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput_device *device = dev->libinput_device;
+	struct udev_device *d;
+	const char *prop;
+
+	d = libinput_device_get_udev_device(device);
+	prop = udev_device_get_property_value(d,
+					      "LIBINPUT_MODEL_WACOM_TOUCHPAD");
+
+	if (libevdev_get_id_vendor(dev->evdev) == VENDOR_ID_WACOM)
+		ck_assert_notnull(prop);
+	else
+		ck_assert(prop == NULL);
+
+	udev_device_unref(d);
+}
+END_TEST
+
+START_TEST(device_udev_tag_apple)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput_device *device = dev->libinput_device;
+	struct udev_device *d;
+	const char *prop;
+
+	d = libinput_device_get_udev_device(device);
+	prop = udev_device_get_property_value(d,
+					      "LIBINPUT_MODEL_WACOM_TOUCHPAD");
+
+	if (libevdev_get_id_vendor(dev->evdev) == VENDOR_ID_WACOM)
+		ck_assert_notnull(prop);
+	else
+		ck_assert(prop == NULL);
+
+	udev_device_unref(d);
+}
+END_TEST
+
+START_TEST(device_udev_tag_synaptics_serial)
+{
+	struct litest_device *dev = litest_current_device();
+	struct libinput_device *device = dev->libinput_device;
+	struct udev_device *d;
+	const char *prop;
+
+	d = libinput_device_get_udev_device(device);
+	prop = udev_device_get_property_value(d,
+					      "LIBINPUT_MODEL_SYNAPTICS_SERIAL_TOUCHPAD");
+
+	if (libevdev_get_id_vendor(dev->evdev) == VENDOR_ID_SYNAPTICS_SERIAL &&
+	    libevdev_get_id_product(dev->evdev) == PRODUCT_ID_SYNAPTICS_SERIAL)
+		ck_assert_notnull(prop);
+	else
+		ck_assert(prop == NULL);
+
+	udev_device_unref(d);
+}
+END_TEST
+
+START_TEST(device_nonpointer_rel)
+{
+	struct libevdev_uinput *uinput;
+	struct libinput *li;
+	struct libinput_device *device;
+	int i;
+
+	uinput = litest_create_uinput_device("test device",
+					     NULL,
+					     EV_KEY, KEY_A,
+					     EV_KEY, KEY_B,
+					     EV_REL, REL_X,
+					     EV_REL, REL_Y,
+					     -1);
+	li = litest_create_context();
+	device = libinput_path_add_device(li,
+					  libevdev_uinput_get_devnode(uinput));
+	ck_assert(device != NULL);
+
+	litest_disable_log_handler(li);
+	for (i = 0; i < 100; i++) {
+		libevdev_uinput_write_event(uinput, EV_REL, REL_X, 1);
+		libevdev_uinput_write_event(uinput, EV_REL, REL_Y, -1);
+		libevdev_uinput_write_event(uinput, EV_SYN, SYN_REPORT, 0);
+		libinput_dispatch(li);
+	}
+	litest_restore_log_handler(li);
+
+	libinput_unref(li);
+	libevdev_uinput_destroy(uinput);
+}
+END_TEST
+
+START_TEST(device_touchpad_rel)
+{
+	struct libevdev_uinput *uinput;
+	struct libinput *li;
+	struct libinput_device *device;
+	const struct input_absinfo abs[] = {
+		{ ABS_X, 0, 10, 0, 0, 10 },
+		{ ABS_Y, 0, 10, 0, 0, 10 },
+		{ ABS_MT_SLOT, 0, 2, 0, 0, 0 },
+		{ ABS_MT_TRACKING_ID, 0, 255, 0, 0, 0 },
+		{ ABS_MT_POSITION_X, 0, 10, 0, 0, 10 },
+		{ ABS_MT_POSITION_Y, 0, 10, 0, 0, 10 },
+		{ -1, -1, -1, -1, -1, -1 }
+	};
+	int i;
+
+	uinput = litest_create_uinput_abs_device("test device",
+						 NULL, abs,
+						 EV_KEY, BTN_TOOL_FINGER,
+						 EV_KEY, BTN_TOUCH,
+						 EV_REL, REL_X,
+						 EV_REL, REL_Y,
+						 -1);
+	li = litest_create_context();
+	device = libinput_path_add_device(li,
+					  libevdev_uinput_get_devnode(uinput));
+	ck_assert(device != NULL);
+
+	for (i = 0; i < 100; i++) {
+		libevdev_uinput_write_event(uinput, EV_REL, REL_X, 1);
+		libevdev_uinput_write_event(uinput, EV_REL, REL_Y, -1);
+		libevdev_uinput_write_event(uinput, EV_SYN, SYN_REPORT, 0);
+		libinput_dispatch(li);
+	}
+
+	libinput_unref(li);
+	libevdev_uinput_destroy(uinput);
+}
+END_TEST
+
+START_TEST(device_touch_rel)
+{
+	struct libevdev_uinput *uinput;
+	struct libinput *li;
+	struct libinput_device *device;
+	const struct input_absinfo abs[] = {
+		{ ABS_X, 0, 10, 0, 0, 10 },
+		{ ABS_Y, 0, 10, 0, 0, 10 },
+		{ ABS_MT_SLOT, 0, 2, 0, 0, 0 },
+		{ ABS_MT_TRACKING_ID, 0, 255, 0, 0, 0 },
+		{ ABS_MT_POSITION_X, 0, 10, 0, 0, 10 },
+		{ ABS_MT_POSITION_Y, 0, 10, 0, 0, 10 },
+		{ -1, -1, -1, -1, -1, -1 }
+	};
+	int i;
+
+	uinput = litest_create_uinput_abs_device("test device",
+						 NULL, abs,
+						 EV_KEY, BTN_TOUCH,
+						 EV_REL, REL_X,
+						 EV_REL, REL_Y,
+						 -1);
+	li = litest_create_context();
+	device = libinput_path_add_device(li,
+					  libevdev_uinput_get_devnode(uinput));
+	ck_assert(device != NULL);
+
+	litest_disable_log_handler(li);
+	for (i = 0; i < 100; i++) {
+		libevdev_uinput_write_event(uinput, EV_REL, REL_X, 1);
+		libevdev_uinput_write_event(uinput, EV_REL, REL_Y, -1);
+		libevdev_uinput_write_event(uinput, EV_SYN, SYN_REPORT, 0);
+		libinput_dispatch(li);
+	}
+	litest_restore_log_handler(li);
+
+	libinput_unref(li);
+	libevdev_uinput_destroy(uinput);
+}
+END_TEST
+
+START_TEST(device_abs_rel)
+{
+	struct libevdev_uinput *uinput;
+	struct libinput *li;
+	struct libinput_device *device;
+	const struct input_absinfo abs[] = {
+		{ ABS_X, 0, 10, 0, 0, 10 },
+		{ ABS_Y, 0, 10, 0, 0, 10 },
+		{ -1, -1, -1, -1, -1, -1 }
+	};
+	int i;
+
+	uinput = litest_create_uinput_abs_device("test device",
+						 NULL, abs,
+						 EV_KEY, BTN_TOUCH,
+						 EV_KEY, BTN_LEFT,
+						 EV_REL, REL_X,
+						 EV_REL, REL_Y,
+						 -1);
+	li = litest_create_context();
+	device = libinput_path_add_device(li,
+					  libevdev_uinput_get_devnode(uinput));
+	ck_assert(device != NULL);
+
+	for (i = 0; i < 100; i++) {
+		libevdev_uinput_write_event(uinput, EV_REL, REL_X, 1);
+		libevdev_uinput_write_event(uinput, EV_REL, REL_Y, -1);
+		libevdev_uinput_write_event(uinput, EV_SYN, SYN_REPORT, 0);
+		libinput_dispatch(li);
+	}
+
+	libinput_unref(li);
+	libevdev_uinput_destroy(uinput);
+}
+END_TEST
+
 void
 litest_setup_tests(void)
 {
@@ -977,6 +1285,7 @@ litest_setup_tests(void)
 
 	litest_add("device:group", device_group_get, LITEST_ANY, LITEST_ANY);
 	litest_add_no_device("device:group", device_group_ref);
+	litest_add_no_device("device:group", device_group_leak);
 
 	litest_add_no_device("device:invalid devices", abs_device_no_absx);
 	litest_add_no_device("device:invalid devices", abs_device_no_absy);
@@ -988,4 +1297,15 @@ litest_setup_tests(void)
 	litest_add_no_device("device:invalid devices", abs_mt_device_missing_res);
 
 	litest_add("device:wheel", device_wheel_only, LITEST_WHEEL, LITEST_RELATIVE|LITEST_ABSOLUTE);
+	litest_add_no_device("device:accelerometer", device_accelerometer);
+
+	litest_add("device:udev tags", device_udev_tag_alps, LITEST_TOUCHPAD, LITEST_ANY);
+	litest_add("device:udev tags", device_udev_tag_wacom, LITEST_TOUCHPAD, LITEST_ANY);
+	litest_add("device:udev tags", device_udev_tag_apple, LITEST_TOUCHPAD, LITEST_ANY);
+	litest_add("device:udev tags", device_udev_tag_synaptics_serial, LITEST_TOUCHPAD, LITEST_ANY);
+
+	litest_add_no_device("device:invalid rel events", device_nonpointer_rel);
+	litest_add_no_device("device:invalid rel events", device_touchpad_rel);
+	litest_add_no_device("device:invalid rel events", device_touch_rel);
+	litest_add_no_device("device:invalid rel events", device_abs_rel);
 }

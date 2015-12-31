@@ -1,23 +1,25 @@
 /*
  * Copyright © 2008 Kristian Høgsberg
+ * Copyright © 2013-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software and its
- * documentation for any purpose is hereby granted without fee, provided that
- * the above copyright notice appear in all copies and that both that copyright
- * notice and this permission notice appear in supporting documentation, and
- * that the name of the copyright holders not be used in advertising or
- * publicity pertaining to distribution of the software without specific,
- * written prior permission.  The copyright holders make no representations
- * about the suitability of this software for any purpose.  It is provided "as
- * is" without express or implied warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
- * INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN NO
- * EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
- * CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
- * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
- * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
- * OF THIS SOFTWARE.
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  */
 
 #ifndef LIBINPUT_UTIL_H
@@ -25,16 +27,23 @@
 
 #include <unistd.h>
 #include <math.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 #include "libinput.h"
 
-void
-set_logging_enabled(int enabled);
+#define VENDOR_ID_APPLE 0x5ac
+#define VENDOR_ID_WACOM 0x56a
+#define VENDOR_ID_SYNAPTICS_SERIAL 0x002
+#define PRODUCT_ID_SYNAPTICS_SERIAL 0x007
 
-void
-log_info(const char *format, ...);
+/* The HW DPI rate we normalize to before calculating pointer acceleration */
+#define DEFAULT_MOUSE_DPI 1000
+
+#define CASE_RETURN_STRING(a) case a: return #a;
 
 /*
  * This list data structure is a verbatim copy from wayland-util.h from the
@@ -86,6 +95,15 @@ int list_empty(const struct list *list);
 #define streq(s1, s2) (strcmp((s1), (s2)) == 0)
 #define strneq(s1, s2, n) (strncmp((s1), (s2), (n)) == 0)
 
+#ifdef DEBUG_TRACE
+#define debug_trace(...) \
+	do { \
+	printf("%s:%d %s() - ", __FILE__, __LINE__, __func__); \
+	printf(__VA_ARGS__); \
+	} while (0)
+#else
+#define debug_trace(...) { }
+#endif
 #define LIBINPUT_EXPORT __attribute__ ((visibility("default")))
 
 static inline void *
@@ -226,6 +244,38 @@ matrix_to_farray6(const struct matrix *m, float out[6])
 	out[5] = m->val[1][2];
 }
 
+/**
+ * Simple wrapper for asprintf that ensures the passed in-pointer is set
+ * to NULL upon error.
+ * The standard asprintf() call does not guarantee the passed in pointer
+ * will be NULL'ed upon failure, whereas this wrapper does.
+ *
+ * @param strp pointer to set to newly allocated string.
+ * This pointer should be passed to free() to release when done.
+ * @param fmt the format string to use for printing.
+ * @return The number of bytes printed (excluding the null byte terminator)
+ * upon success or -1 upon failure. In the case of failure the pointer is set
+ * to NULL.
+ */
+static inline int
+xasprintf(char **strp, const char *fmt, ...)
+	LIBINPUT_ATTRIBUTE_PRINTF(2, 3);
+
+static inline int
+xasprintf(char **strp, const char *fmt, ...)
+{
+	int rc = 0;
+	va_list args;
+
+	va_start(args, fmt);
+	rc = vasprintf(strp, fmt, args);
+	va_end(args);
+	if ((rc == -1) && strp)
+		*strp = NULL;
+
+	return rc;
+}
+
 enum ratelimit_state {
 	RATELIMIT_EXCEEDED,
 	RATELIMIT_THRESHOLD,
@@ -245,5 +295,36 @@ enum ratelimit_state ratelimit_test(struct ratelimit *r);
 int parse_mouse_dpi_property(const char *prop);
 int parse_mouse_wheel_click_angle_property(const char *prop);
 double parse_trackpoint_accel_property(const char *prop);
+bool parse_dimension_property(const char *prop, size_t *width, size_t *height);
+
+static inline uint64_t
+us(uint64_t us)
+{
+	return us;
+}
+
+static inline uint64_t
+ns2us(uint64_t ns)
+{
+	return us(ns / 1000);
+}
+
+static inline uint64_t
+ms2us(uint64_t ms)
+{
+	return us(ms * 1000);
+}
+
+static inline uint64_t
+s2us(uint64_t s)
+{
+	return ms2us(s * 1000);
+}
+
+static inline uint32_t
+us2ms(uint64_t us)
+{
+	return (uint32_t)(us / 1000);
+}
 
 #endif /* LIBINPUT_UTIL_H */

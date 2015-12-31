@@ -1,23 +1,24 @@
 /*
- * Copyright © 2013 Red Hat, Inc.
+ * Copyright © 2013-2015 Red Hat, Inc.
  *
- * Permission to use, copy, modify, distribute, and sell this software
- * and its documentation for any purpose is hereby granted without
- * fee, provided that the above copyright notice appear in all copies
- * and that both that copyright notice and this permission notice
- * appear in supporting documentation, and that the name of Red Hat
- * not be used in advertising or publicity pertaining to distribution
- * of the software without specific, written prior permission.  Red
- * Hat makes no representations about the suitability of this software
- * for any purpose.  It is provided "as is" without express or implied
- * warranty.
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * THE AUTHORS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS SOFTWARE,
- * INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS, IN
- * NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY SPECIAL, INDIRECT OR
- * CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
- * OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
- * NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
@@ -34,10 +35,8 @@
 
 #include "evdev-mt-touchpad.h"
 
-#define CASE_RETURN_STRING(a) case a: return #a
-
-#define DEFAULT_TAP_TIMEOUT_PERIOD 180
-#define DEFAULT_DRAG_TIMEOUT_PERIOD 500
+#define DEFAULT_TAP_TIMEOUT_PERIOD ms2us(180)
+#define DEFAULT_DRAG_TIMEOUT_PERIOD ms2us(300)
 #define DEFAULT_TAP_MOVE_THRESHOLD TP_MM_TO_DPI_NORMALIZED(3)
 
 enum tap_event {
@@ -46,6 +45,7 @@ enum tap_event {
 	TAP_EVENT_RELEASE,
 	TAP_EVENT_BUTTON,
 	TAP_EVENT_TIMEOUT,
+	TAP_EVENT_THUMB,
 };
 
 /*****************************************
@@ -69,6 +69,7 @@ tap_state_to_str(enum tp_tap_state state)
 	CASE_RETURN_STRING(TAP_STATE_TAPPED);
 	CASE_RETURN_STRING(TAP_STATE_TOUCH_2);
 	CASE_RETURN_STRING(TAP_STATE_TOUCH_2_HOLD);
+	CASE_RETURN_STRING(TAP_STATE_TOUCH_2_RELEASE);
 	CASE_RETURN_STRING(TAP_STATE_TOUCH_3);
 	CASE_RETURN_STRING(TAP_STATE_TOUCH_3_HOLD);
 	CASE_RETURN_STRING(TAP_STATE_DRAGGING);
@@ -92,10 +93,10 @@ tap_event_to_str(enum tap_event event)
 	CASE_RETURN_STRING(TAP_EVENT_RELEASE);
 	CASE_RETURN_STRING(TAP_EVENT_TIMEOUT);
 	CASE_RETURN_STRING(TAP_EVENT_BUTTON);
+	CASE_RETURN_STRING(TAP_EVENT_THUMB);
 	}
 	return NULL;
 }
-#undef CASE_RETURN_STRING
 
 static void
 tp_tap_notify(struct tp_dispatch *tp,
@@ -147,7 +148,7 @@ tp_tap_idle_handle_event(struct tp_dispatch *tp,
 			 struct tp_touch *t,
 			 enum tap_event event, uint64_t time)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 
 	switch (event) {
 	case TAP_EVENT_TOUCH:
@@ -164,6 +165,10 @@ tp_tap_idle_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
+		break;
+	case TAP_EVENT_THUMB:
+		log_bug_libinput(libinput,
+				 "invalid tap event, no fingers down, no thumb\n");
 		break;
 	}
 }
@@ -192,6 +197,12 @@ tp_tap_touch_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
 		break;
+	case TAP_EVENT_THUMB:
+		tp->tap.state = TAP_STATE_IDLE;
+		t->tap.is_thumb = true;
+		t->tap.state = TAP_TOUCH_STATE_DEAD;
+		tp_tap_clear_timer(tp);
+		break;
 	}
 }
 
@@ -215,6 +226,11 @@ tp_tap_hold_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
 		break;
+	case TAP_EVENT_THUMB:
+		tp->tap.state = TAP_STATE_IDLE;
+		t->tap.is_thumb = true;
+		t->tap.state = TAP_TOUCH_STATE_DEAD;
+		break;
 	}
 }
 
@@ -223,7 +239,7 @@ tp_tap_tapped_handle_event(struct tp_dispatch *tp,
 			   struct tp_touch *t,
 			   enum tap_event event, uint64_t time)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 
 	switch (event) {
 	case TAP_EVENT_MOTION:
@@ -243,6 +259,8 @@ tp_tap_tapped_handle_event(struct tp_dispatch *tp,
 		tp->tap.state = TAP_STATE_DEAD;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -258,12 +276,8 @@ tp_tap_touch2_handle_event(struct tp_dispatch *tp,
 		tp_tap_set_timer(tp, time);
 		break;
 	case TAP_EVENT_RELEASE:
-		tp->tap.state = TAP_STATE_HOLD;
-		if (t->tap.state == TAP_TOUCH_STATE_TOUCH) {
-			tp_tap_notify(tp, time, 2, LIBINPUT_BUTTON_STATE_PRESSED);
-			tp_tap_notify(tp, time, 2, LIBINPUT_BUTTON_STATE_RELEASED);
-		}
-		tp_tap_clear_timer(tp);
+		tp->tap.state = TAP_STATE_TOUCH_2_RELEASE;
+		tp_tap_set_timer(tp, time);
 		break;
 	case TAP_EVENT_MOTION:
 		tp_tap_clear_timer(tp);
@@ -273,6 +287,8 @@ tp_tap_touch2_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
+		break;
+	case TAP_EVENT_THUMB:
 		break;
 	}
 }
@@ -297,6 +313,37 @@ tp_tap_touch2_hold_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
+		break;
+	case TAP_EVENT_THUMB:
+		break;
+	}
+}
+
+static void
+tp_tap_touch2_release_handle_event(struct tp_dispatch *tp,
+				   struct tp_touch *t,
+				   enum tap_event event, uint64_t time)
+{
+
+	switch (event) {
+	case TAP_EVENT_TOUCH:
+		tp->tap.state = TAP_STATE_TOUCH_2_HOLD;
+		t->tap.state = TAP_TOUCH_STATE_DEAD;
+		tp_tap_clear_timer(tp);
+		break;
+	case TAP_EVENT_RELEASE:
+		tp_tap_notify(tp, time, 2, LIBINPUT_BUTTON_STATE_PRESSED);
+		tp_tap_notify(tp, time, 2, LIBINPUT_BUTTON_STATE_RELEASED);
+		tp->tap.state = TAP_STATE_IDLE;
+		break;
+	case TAP_EVENT_MOTION:
+	case TAP_EVENT_TIMEOUT:
+		tp->tap.state = TAP_STATE_HOLD;
+		break;
+	case TAP_EVENT_BUTTON:
+		tp->tap.state = TAP_STATE_DEAD;
+		break;
+	case TAP_EVENT_THUMB:
 		break;
 	}
 }
@@ -327,6 +374,8 @@ tp_tap_touch3_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -349,6 +398,8 @@ tp_tap_touch3_hold_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
+		break;
+	case TAP_EVENT_THUMB:
 		break;
 	}
 }
@@ -376,6 +427,8 @@ tp_tap_dragging_or_doubletap_handle_event(struct tp_dispatch *tp,
 		tp->tap.state = TAP_STATE_DEAD;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -390,8 +443,16 @@ tp_tap_dragging_handle_event(struct tp_dispatch *tp,
 		tp->tap.state = TAP_STATE_DRAGGING_2;
 		break;
 	case TAP_EVENT_RELEASE:
-		tp->tap.state = TAP_STATE_DRAGGING_WAIT;
-		tp_tap_set_drag_timer(tp, time);
+		if (tp->tap.drag_lock_enabled) {
+			tp->tap.state = TAP_STATE_DRAGGING_WAIT;
+			tp_tap_set_drag_timer(tp, time);
+		} else {
+			tp_tap_notify(tp,
+				      time,
+				      1,
+				      LIBINPUT_BUTTON_STATE_RELEASED);
+			tp->tap.state = TAP_STATE_IDLE;
+		}
 		break;
 	case TAP_EVENT_MOTION:
 	case TAP_EVENT_TIMEOUT:
@@ -400,6 +461,8 @@ tp_tap_dragging_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
+		break;
+	case TAP_EVENT_THUMB:
 		break;
 	}
 }
@@ -425,6 +488,8 @@ tp_tap_dragging_wait_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_DEAD;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
+		break;
+	case TAP_EVENT_THUMB:
 		break;
 	}
 }
@@ -452,6 +517,8 @@ tp_tap_dragging_tap_handle_event(struct tp_dispatch *tp,
 		tp->tap.state = TAP_STATE_DEAD;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -477,6 +544,8 @@ tp_tap_dragging2_handle_event(struct tp_dispatch *tp,
 		tp->tap.state = TAP_STATE_DEAD;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -485,7 +554,7 @@ tp_tap_multitap_handle_event(struct tp_dispatch *tp,
 			      struct tp_touch *t,
 			      enum tap_event event, uint64_t time)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 
 	switch (event) {
 	case TAP_EVENT_RELEASE:
@@ -508,6 +577,8 @@ tp_tap_multitap_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_IDLE;
 		tp_tap_clear_timer(tp);
+		break;
+	case TAP_EVENT_THUMB:
 		break;
 	}
 }
@@ -537,6 +608,8 @@ tp_tap_multitap_down_handle_event(struct tp_dispatch *tp,
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		tp_tap_clear_timer(tp);
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -557,6 +630,8 @@ tp_tap_dead_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_TIMEOUT:
 	case TAP_EVENT_BUTTON:
 		break;
+	case TAP_EVENT_THUMB:
+		break;
 	}
 }
 
@@ -566,7 +641,7 @@ tp_tap_handle_event(struct tp_dispatch *tp,
 		    enum tap_event event,
 		    uint64_t time)
 {
-	struct libinput *libinput = tp->device->base.seat->libinput;
+	struct libinput *libinput = tp_libinput_context(tp);
 	enum tp_tap_state current;
 
 	current = tp->tap.state;
@@ -589,6 +664,9 @@ tp_tap_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_STATE_TOUCH_2_HOLD:
 		tp_tap_touch2_hold_handle_event(tp, t, event, time);
+		break;
+	case TAP_STATE_TOUCH_2_RELEASE:
+		tp_tap_touch2_release_handle_event(tp, t, event, time);
 		break;
 	case TAP_STATE_TOUCH_3:
 		tp_tap_touch3_handle_event(tp, t, event, time);
@@ -672,7 +750,20 @@ tp_tap_handle_state(struct tp_dispatch *tp, uint64_t time)
 		    tp->queued & TOUCHPAD_EVENT_BUTTON_PRESS)
 			t->tap.state = TAP_TOUCH_STATE_DEAD;
 
+		/* If a touch was considered thumb for tapping once, we
+		 * ignore it for the rest of lifetime */
+		if (t->tap.is_thumb)
+			continue;
+
 		if (t->state == TOUCH_BEGIN) {
+			/* The simple version: if a touch is a thumb on
+			 * begin we ignore it. All other thumb touches
+			 * follow the normal tap state for now */
+			if (t->thumb.state == THUMB_STATE_YES) {
+				t->tap.is_thumb = true;
+				continue;
+			}
+
 			t->tap.state = TAP_TOUCH_STATE_TOUCH;
 			t->tap.initial = t->point;
 			tp_tap_handle_event(tp, t, TAP_EVENT_TOUCH, time);
@@ -699,6 +790,10 @@ tp_tap_handle_state(struct tp_dispatch *tp, uint64_t time)
 			}
 
 			tp_tap_handle_event(tp, t, TAP_EVENT_MOTION, time);
+		} else if (tp->tap.state != TAP_STATE_IDLE &&
+			   t->thumb.state == THUMB_STATE_YES &&
+			   !t->tap.is_thumb) {
+			tp_tap_handle_event(tp, t, TAP_EVENT_THUMB, time);
 		}
 	}
 
@@ -834,6 +929,44 @@ tp_tap_config_get_default(struct libinput_device *device)
 	return tp_tap_default(evdev);
 }
 
+static enum libinput_config_status
+tp_tap_config_set_draglock_enabled(struct libinput_device *device,
+				   enum libinput_config_drag_lock_state enabled)
+{
+	struct evdev_dispatch *dispatch = ((struct evdev_device *) device)->dispatch;
+	struct tp_dispatch *tp = NULL;
+
+	tp = container_of(dispatch, tp, base);
+	tp->tap.drag_lock_enabled = enabled;
+
+	return LIBINPUT_CONFIG_STATUS_SUCCESS;
+}
+
+static enum libinput_config_drag_lock_state
+tp_tap_config_get_draglock_enabled(struct libinput_device *device)
+{
+	struct evdev_device *evdev = (struct evdev_device *)device;
+	struct tp_dispatch *tp = NULL;
+
+	tp = container_of(evdev->dispatch, tp, base);
+
+	return tp->tap.drag_lock_enabled;
+}
+
+static inline enum libinput_config_drag_lock_state
+tp_drag_lock_default(struct evdev_device *device)
+{
+	return LIBINPUT_CONFIG_DRAG_LOCK_DISABLED;
+}
+
+static enum libinput_config_drag_lock_state
+tp_tap_config_get_default_draglock_enabled(struct libinput_device *device)
+{
+	struct evdev_device *evdev = (struct evdev_device *)device;
+
+	return tp_drag_lock_default(evdev);
+}
+
 int
 tp_init_tap(struct tp_dispatch *tp)
 {
@@ -841,13 +974,17 @@ tp_init_tap(struct tp_dispatch *tp)
 	tp->tap.config.set_enabled = tp_tap_config_set_enabled;
 	tp->tap.config.get_enabled = tp_tap_config_is_enabled;
 	tp->tap.config.get_default = tp_tap_config_get_default;
+	tp->tap.config.set_draglock_enabled = tp_tap_config_set_draglock_enabled;
+	tp->tap.config.get_draglock_enabled = tp_tap_config_get_draglock_enabled;
+	tp->tap.config.get_default_draglock_enabled = tp_tap_config_get_default_draglock_enabled;
 	tp->device->base.config.tap = &tp->tap.config;
 
 	tp->tap.state = TAP_STATE_IDLE;
 	tp->tap.enabled = tp_tap_default(tp->device);
+	tp->tap.drag_lock_enabled = tp_drag_lock_default(tp->device);
 
 	libinput_timer_init(&tp->tap.timer,
-			    tp->device->base.seat->libinput,
+			    tp_libinput_context(tp),
 			    tp_tap_handle_timeout, tp);
 
 	return 0;
