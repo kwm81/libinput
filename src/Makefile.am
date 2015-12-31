@@ -25,6 +25,8 @@ libinput_la_SOURCES =			\
 	path.c				\
 	udev-seat.c			\
 	udev-seat.h			\
+	udev-stubs.c			\
+	udev-stubs.h			\
 	timer.c				\
 	timer.h				\
 	../include/linux/input.h

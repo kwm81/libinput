@@ -30,7 +30,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __linux__
 #include <libudev.h>
+#else
+#include "udev-stubs.h"
+#endif
 
 #include <libevdev/libevdev.h>
 #include <libinput-util.h>
@@ -70,6 +74,10 @@ log_handler(struct libinput *li,
 {
 	vprintf(format, args);
 }
+
+#ifndef __linux__
+const char *program_invocation_short_name;
+#endif
 
 void
 tools_usage()
@@ -168,6 +176,10 @@ tools_parse_args(int argc, char **argv, struct tools_context *context)
 		c = getopt_long(argc, argv, "h", opts, &option_index);
 		if (c == -1)
 			break;
+
+#ifndef __linux__
+		program_invocation_short_name = argv[0];
+#endif
 
 		switch(c) {
 		case 'h':

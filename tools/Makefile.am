@@ -8,7 +8,9 @@ AM_CPPFLAGS = -I$(top_srcdir)/include \
 
 libshared_la_SOURCES = \
 		       shared.c \
-		       shared.h
+		       shared.h \
+		       ../src/udev-stubs.c
+
 libshared_la_CFLAGS = $(LIBEVDEV_CFLAGS)
 libshared_la_LIBADD = $(LIBEVDEV_LIBS)
 
@@ -32,12 +34,12 @@ libinput_debug_events_CFLAGS = $(event_debug_CFLAGS)
 dist_man1_MANS += libinput-debug-events.man
 
 if BUILD_EVENTGUI
-noinst_PROGRAMS += event-gui
-
-event_gui_SOURCES = event-gui.c
-event_gui_LDADD = ../src/libinput.la libshared.la $(CAIRO_LIBS) $(GTK_LIBS) $(LIBUDEV_LIBS)
-event_gui_CFLAGS = $(CAIRO_CFLAGS) $(GTK_CFLAGS) $(LIBUDEV_CFLAGS)
-event_gui_LDFLAGS = -no-install
+# noinst_PROGRAMS += event-gui
+# 
+# event_gui_SOURCES = event-gui.c
+# event_gui_LDADD = ../src/libinput.la libshared.la $(CAIRO_LIBS) $(GTK_LIBS) $(LIBUDEV_LIBS)
+# event_gui_CFLAGS = $(CAIRO_CFLAGS) $(GTK_CFLAGS) $(LIBUDEV_CFLAGS)
+# event_gui_LDFLAGS = -no-install
 endif
 
 EXTRA_DIST = make-ptraccel-graphs.sh

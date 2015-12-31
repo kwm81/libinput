@@ -26,14 +26,21 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
+#undef __nonnull
+#define __nonnull(...)
 #include <signal.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __linux__
 #include <libudev.h>
+#else
+#include "udev-stubs.h"
+#endif
 #include "linux/input.h"
 #include <sys/ioctl.h>
 
+#include <libevdev/libevdev.h>
 #include <libinput.h>
 #include <libevdev/libevdev.h>
 

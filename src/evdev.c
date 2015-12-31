@@ -25,6 +25,8 @@
 
 #include "config.h"
 
+#include <sys/stat.h>
+
 #include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -33,7 +35,9 @@
 #include "linux/input.h"
 #include <unistd.h>
 #include <fcntl.h>
+#ifdef __linux__
 #include <mtdev-plumbing.h>
+#endif
 #include <assert.h>
 #include <time.h>
 #include <math.h>
@@ -1338,6 +1342,7 @@ static inline void
 evdev_device_dispatch_one(struct evdev_device *device,
 			  struct input_event *ev)
 {
+#ifdef __linux__
 	if (!device->mtdev) {
 		evdev_process_event(device, ev);
 	} else {
@@ -1350,6 +1355,9 @@ evdev_device_dispatch_one(struct evdev_device *device,
 			}
 		}
 	}
+#else
+	evdev_process_event(device, ev);
+#endif
 }
 
 static int
@@ -1544,6 +1552,7 @@ evdev_device_init_pointer_acceleration(struct evdev_device *device,
 	return 0;
 }
 
+#ifdef __linux__
 static inline int
 evdev_need_mtdev(struct evdev_device *device)
 {
@@ -1553,6 +1562,7 @@ evdev_need_mtdev(struct evdev_device *device)
 		libevdev_has_event_code(evdev, EV_ABS, ABS_MT_POSITION_Y) &&
 		!libevdev_has_event_code(evdev, EV_ABS, ABS_MT_SLOT));
 }
+#endif
 
 static inline int
 evdev_read_wheel_click_prop(struct evdev_device *device)
@@ -1939,6 +1949,7 @@ evdev_configure_mt_device(struct evdev_device *device)
 	/* We only handle the slotted Protocol B in libinput.
 	   Devices with ABS_MT_POSITION_* but not ABS_MT_SLOT
 	   require mtdev for conversion. */
+#ifdef __linux__
 	if (evdev_need_mtdev(device)) {
 		device->mtdev = mtdev_new_open(device->fd);
 		if (!device->mtdev)
@@ -1949,9 +1960,12 @@ evdev_configure_mt_device(struct evdev_device *device)
 		num_slots = 10;
 		active_slot = device->mtdev->caps.slot.value;
 	} else {
+#endif
 		num_slots = libevdev_get_num_slots(device->evdev);
 		active_slot = libevdev_get_current_slot(evdev);
+#ifdef __linux__
 	}
+#endif
 
 	slots = calloc(num_slots, sizeof(struct mt_slot));
 	if (!slots)
@@ -1960,8 +1974,10 @@ evdev_configure_mt_device(struct evdev_device *device)
 	for (slot = 0; slot < num_slots; ++slot) {
 		slots[slot].seat_slot = -1;
 
+#ifdef __linux__
 		if (evdev_need_mtdev(device))
 			continue;
+#endif
 
 		slots[slot].point.x = libevdev_get_slot_value(evdev,
 							      slot,
@@ -2655,10 +2671,12 @@ evdev_device_suspend(struct evdev_device *device)
 		device->source = NULL;
 	}
 
+#ifdef __linux__
 	if (device->mtdev) {
 		mtdev_close_delete(device->mtdev);
 		device->mtdev = NULL;
 	}
+#endif
 
 	if (device->fd != -1) {
 		close_restricted(device->base.seat->libinput, device->fd);
@@ -2699,11 +2717,13 @@ evdev_device_resume(struct evdev_device *device)
 
 	device->fd = fd;
 
+#ifdef __linux__
 	if (evdev_need_mtdev(device)) {
 		device->mtdev = mtdev_new_open(device->fd);
 		if (!device->mtdev)
 			return -ENODEV;
 	}
+#endif
 
 	libevdev_change_fd(device->evdev, fd);
 	libevdev_set_clock_id(device->evdev, CLOCK_MONOTONIC);
@@ -2722,7 +2742,9 @@ evdev_device_resume(struct evdev_device *device)
 	device->source =
 		libinput_add_fd(libinput, fd, evdev_device_dispatch, device);
 	if (!device->source) {
+#ifdef __linux__
 		mtdev_close_delete(device->mtdev);
+#endif
 		return -ENOMEM;
 	}
 

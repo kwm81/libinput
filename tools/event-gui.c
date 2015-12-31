@@ -112,6 +112,12 @@ msg(const char *fmt, ...)
 	va_end(args);
 }
 
+static void
+usage(void)
+{
+	printf("[path/to/device]\n");
+}
+
 static gboolean
 draw(GtkWidget *widget, cairo_t *cr, gpointer data)
 {

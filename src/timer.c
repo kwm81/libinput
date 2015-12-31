@@ -26,8 +26,14 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
+#ifdef __linux__
 #include <sys/timerfd.h>
+#else
+#include <sys/types.h>
+#include <sys/event.h>
+#endif
 #include <unistd.h>
 
 #include "libinput-private.h"
@@ -46,9 +52,7 @@ libinput_timer_init(struct libinput_timer *timer, struct libinput *libinput,
 static void
 libinput_timer_arm_timer_fd(struct libinput *libinput)
 {
-	int r;
 	struct libinput_timer *timer;
-	struct itimerspec its = { { 0, 0 }, { 0, 0 } };
 	uint64_t earliest_expire = UINT64_MAX;
 
 	list_for_each(timer, &libinput->timer.list, link) {
@@ -56,14 +60,34 @@ libinput_timer_arm_timer_fd(struct libinput *libinput)
 			earliest_expire = timer->expire;
 	}
 
+#ifdef __linux__
+	int r;
+	struct itimerspec its = { { 0, 0 }, { 0, 0 } };
 	if (earliest_expire != UINT64_MAX) {
 		its.it_value.tv_sec = earliest_expire / ms2us(1000);
 		its.it_value.tv_nsec = (earliest_expire % ms2us(1000)) * 1000;
 	}
 
 	r = timerfd_settime(libinput->timer.fd, TFD_TIMER_ABSTIME, &its, NULL);
-	if (r)
+	if (r) {
+#else
+	uint64_t now = libinput_now(timer->libinput);
+	struct kevent chlist[3];
+	int nchanges = 0;
+	EV_SET(&chlist[nchanges++], 0, EVFILT_TIMER, EV_ADD, 0, 0, 0);
+	EV_SET(&chlist[nchanges++], 0, EVFILT_TIMER, EV_DELETE, 0, 0, 0);
+	if (earliest_expire != UINT64_MAX) {
+		EV_SET(
+		  &chlist[nchanges++], 0, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0,
+		  earliest_expire > now ? (earliest_expire - now) / 1000 + 1
+					: 0,
+		  libinput->timer.source);
+	}
+
+	if (kevent(libinput->epoll_fd, chlist, nchanges, NULL, 0, NULL) == -1) {
+#endif
 		log_error(libinput, "timerfd_settime error: %s\n", strerror(errno));
+	}
 }
 
 void
@@ -80,6 +104,7 @@ libinput_timer_set(struct libinput_timer *timer, uint64_t expire)
 				 PRIu64 " expire %" PRIu64 "\n",
 				 now, expire);
 #endif
+	fprintf(stderr, "setting timer at %llu\n", (long long unsigned) expire);
 
 	assert(expire);
 
@@ -110,12 +135,14 @@ libinput_timer_handler(void *data)
 	uint64_t discard;
 	int r;
 
+#ifdef __linux__
 	r = read(libinput->timer.fd, &discard, sizeof(discard));
 	if (r == -1 && errno != EAGAIN)
 		log_bug_libinput(libinput,
 				 "Error %d reading from timerfd (%s)",
 				 errno,
 				 strerror(errno));
+#endif
 
 	now = libinput_now(libinput);
 	if (now == 0)
@@ -134,10 +161,14 @@ libinput_timer_handler(void *data)
 int
 libinput_timer_subsys_init(struct libinput *libinput)
 {
+#ifdef __linux__
 	libinput->timer.fd = timerfd_create(CLOCK_MONOTONIC,
 					    TFD_CLOEXEC | TFD_NONBLOCK);
 	if (libinput->timer.fd < 0)
 		return -1;
+#else
+	libinput->timer.fd = -2;
+#endif
 
 	list_init(&libinput->timer.list);
 
@@ -160,5 +191,7 @@ libinput_timer_subsys_destroy(struct libinput *libinput)
 	assert(list_empty(&libinput->timer.list));
 
 	libinput_remove_source(libinput, libinput->timer.source);
+#ifdef __linux__
 	close(libinput->timer.fd);
+#endif
 }

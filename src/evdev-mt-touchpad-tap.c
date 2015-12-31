@@ -416,6 +416,8 @@ tp_tap_dragging_or_doubletap_handle_event(struct tp_dispatch *tp,
 	case TAP_EVENT_RELEASE:
 		tp->tap.state = TAP_STATE_MULTITAP;
 		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
+		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_PRESSED);
+		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		break;
 	case TAP_EVENT_MOTION:
 	case TAP_EVENT_TIMEOUT:
@@ -571,8 +573,6 @@ tp_tap_multitap_handle_event(struct tp_dispatch *tp,
 		break;
 	case TAP_EVENT_TIMEOUT:
 		tp->tap.state = TAP_STATE_IDLE;
-		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_PRESSED);
-		tp_tap_notify(tp, time, 1, LIBINPUT_BUTTON_STATE_RELEASED);
 		break;
 	case TAP_EVENT_BUTTON:
 		tp->tap.state = TAP_STATE_IDLE;

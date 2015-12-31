@@ -27,7 +27,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef __linux__
 #include <libudev.h>
+#else
+#include "udev-stubs.h"
+#endif
 
 #include <libinput.h>
 #include <libinput-util.h>
@@ -286,7 +290,7 @@ print_device_notify(struct libinput_event *ev)
 }
 
 static inline void
-usage(void)
+usage(const char *argv0)
 {
 	printf("Usage: %s [--help|--version]\n"
 	       "\n"
@@ -299,7 +303,7 @@ usage(void)
 	       "--version ... show version information\n"
 	       "\n"
 	       "This tool requires access to the /dev/input/eventX nodes.\n",
-	       program_invocation_short_name);
+	       argv0);
 }
 
 int
@@ -311,13 +315,13 @@ main(int argc, char **argv)
 
 	if (argc > 1) {
 		if (streq(argv[1], "--help")) {
-			usage();
+			usage(argv[0]);
 			return 0;
 		} else if (streq(argv[1], "--version")) {
 			printf("%s\n", LIBINPUT_VERSION);
 			return 0;
 		} else {
-			usage();
+			usage(argv[0]);
 			return 1;
 		}
 	}

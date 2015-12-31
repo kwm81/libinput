@@ -36,6 +36,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef __FreeBSD__
+#include <xlocale.h>
+#endif
 
 #include "libinput-util.h"
 #include "libinput-private.h"
