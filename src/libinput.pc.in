@@ -11,4 +11,3 @@ Version: @LIBINPUT_VERSION@
 Cflags: -I${includedir}
 Libs: -L${libdir} -linput
 Libs.private: -lm -lrt
-Requires.private: libudev
